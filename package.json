@@ -10,7 +10,7 @@
     "build": "npm run build:web && npm run build:electron",
     "build:electron": "vite build --mode electron && tsc -p tsconfig.electron.json",
     "build:web": "vite build --mode web",
-    "typecheck": "tsc -p tsconfig.tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "electron": "electron .",
     "dist:win": "npm run build && electron-builder --win nsis --x64"
   },
