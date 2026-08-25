@@ -3,6 +3,7 @@ import type { OverlayState } from './types';
 
 const fallbackState: OverlayState = { protectedMode: true, alwaysOnTop: true, visible: true };
 const demoSites = ['https://example.com', 'https://developer.mozilla.org', 'https://react.dev'];
+const downloadUrl = 'https://github.com/adityaztpl/Overlay-Monster/releases/download/latest/Overlay-Monster-Setup.exe';
 
 function normalizeUrl(value: string): string {
   const trimmed = value.trim();
@@ -91,6 +92,7 @@ export default function App(): JSX.Element {
           <input value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Address" />
           <button type="button" onClick={() => native ? void window.browser!.reload() : void navigate()}>↻</button>
         </form>
+        <a className="download-button" href={downloadUrl}>Download for Windows ↓</a>
         <div className="security"><span className="dot" /> {state.protectedMode ? 'Protected' : 'Protection off'}</div>
       </header>
 
