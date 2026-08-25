@@ -17,6 +17,13 @@ type BrowserAPI = {
   onUrlChanged(callback: (url: string) => void): () => void;
 };
 
+type AppAPI = {
+  getVersion(): Promise<string>;
+  checkForUpdates(): Promise<{ status: string }>;
+  installUpdate(): Promise<boolean>;
+  onUpdateStatus(callback: (payload: { status: string; version?: string }) => void): () => void;
+};
+
 const overlay: OverlayAPI = {
   getState: () => ipcRenderer.invoke('overlay:get-state'),
   setProtection: (enabled) => ipcRenderer.invoke('overlay:set-protection', enabled),
@@ -42,5 +49,17 @@ const browser: BrowserAPI = {
   },
 };
 
+const appApi: AppAPI = {
+  getVersion: () => ipcRenderer.invoke('app:get-version'),
+  checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('app:install-update'),
+  onUpdateStatus: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { status: string; version?: string }) => callback(payload);
+    ipcRenderer.on('app:update-status', listener);
+    return () => ipcRenderer.removeListener('app:update-status', listener);
+  },
+};
+
 contextBridge.exposeInMainWorld('overlay', overlay);
 contextBridge.exposeInMainWorld('browser', browser);
+contextBridge.exposeInMainWorld('appApi', appApi);
