@@ -1,8 +1,23 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { OverlayState } from './types';
 
 const fallbackState: OverlayState = { protectedMode: true, alwaysOnTop: true, visible: true };
 const demoSites = ['https://example.com', 'https://developer.mozilla.org', 'https://react.dev'];
+
+function normalizeUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'https://example.com';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function isEmbeddableDemo(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'example.com' || hostname.endsWith('.example.com');
+  } catch {
+    return false;
+  }
+}
 
 export default function App(): JSX.Element {
   const [state, setState] = useState(fallbackState);
@@ -11,6 +26,7 @@ export default function App(): JSX.Element {
   const [aiPrompt, setAiPrompt] = useState('');
   const [answer, setAnswer] = useState('AI panel ready. Connect your provider API to stream responses.');
   const native = Boolean(window.overlay && window.browser);
+  const webPreviewBlocked = useMemo(() => !isEmbeddableDemo(demoUrl), [demoUrl]);
 
   useEffect(() => {
     if (!native) return;
@@ -21,12 +37,20 @@ export default function App(): JSX.Element {
 
   const navigate = async (event?: FormEvent) => {
     event?.preventDefault();
+    const targetUrl = normalizeUrl(url);
+    setUrl(targetUrl);
+
     if (native) {
-      const target = await window.browser!.navigate(url);
+      const target = await window.browser!.navigate(targetUrl);
       setUrl(target);
     } else {
-      setDemoUrl(url);
+      setDemoUrl(targetUrl);
     }
+  };
+
+  const selectDemoSite = (site: string) => {
+    setUrl(site);
+    setDemoUrl(site);
   };
 
   const askAI = (event: FormEvent) => {
@@ -76,7 +100,28 @@ export default function App(): JSX.Element {
         </aside>
 
         <section className="browser-panel">
-          {!native && <div className="web-preview"><div className="demo-tabs">{demoSites.map((site) => <button key={site} onClick={() => { setUrl(site); setDemoUrl(site); }}>{new URL(site).hostname}</button>)}</div><iframe title="Browser preview" src={demoUrl} /></div>}
+          {!native && (
+            <div className="web-preview">
+              <div className="demo-tabs">
+                {demoSites.map((site) => (
+                  <button key={site} onClick={() => selectDemoSite(site)}>{new URL(site).hostname}</button>
+                ))}
+              </div>
+
+              {webPreviewBlocked ? (
+                <div className="preview-fallback">
+                  <div className="preview-icon">↗</div>
+                  <h2>Site cannot be embedded here</h2>
+                  <p>{demoUrl}</p>
+                  <span>This Vercel preview runs inside a normal browser. Sites can block iframe embedding with CSP or X-Frame-Options.</span>
+                  <a href={demoUrl} target="_blank" rel="noreferrer">Open site in a new tab ↗</a>
+                  <small>The Electron build uses a native WebContentsView and is the full browser experience.</small>
+                </div>
+              ) : (
+                <iframe title="Browser preview" src={demoUrl} />
+              )}
+            </div>
+          )}
           {native && <div className="native-browser"><div className="browser-note">Native Electron browser surface is active → {url}</div></div>}
         </section>
       </section>
