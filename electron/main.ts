@@ -55,8 +55,6 @@ function applyProtection(enabled: boolean): boolean {
   }
 
   if (process.platform !== 'win32' && enabled) {
-    // Electron supports content protection on supported desktop platforms, but
-    // this app's capture-protection target is Windows.
     protectionStatus = 'unsupported';
     return false;
   }
@@ -119,15 +117,13 @@ function createWindow(): void {
     },
   });
 
-  // Apply capture protection before the first frame can be shown.
   applyProtection(protectedMode);
   mainWindow.setAlwaysOnTop(alwaysOnTop);
-
   mainWindow.on('resize', updateBrowserBounds);
 
-  // In protected mode, minimizing hides the overlay instead of leaving a
-  // minimized entry behind. Ctrl+Shift+Space restores it.
-  mainWindow.on('minimize', (event) => {
+  // Electron typings in the installed version omit the Windows `minimize`
+  // event from BrowserWindow's overload map. The runtime event is supported.
+  mainWindow.on('minimize' as any, (event: Electron.Event) => {
     if (!protectedMode || !overlayVisible) return;
     event.preventDefault();
     overlayVisible = false;
@@ -155,8 +151,6 @@ function createWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => {
-    // Protection was applied before show. Re-apply after renderer creation as
-    // a defensive sync point for packaged builds.
     applyProtection(protectedMode);
     mainWindow?.show();
   });
