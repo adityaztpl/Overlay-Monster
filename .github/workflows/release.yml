@@ -46,3 +46,4 @@ jobs:
           prerelease: false
           make_latest: true
           files: release/*.exe
+          overwrite_files: true
