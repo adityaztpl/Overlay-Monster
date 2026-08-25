@@ -1,6 +1,7 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, WebContentsView } from 'electron';
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, WebContentsView } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 
@@ -11,7 +12,11 @@ let protectedMode = true;
 let protectionStatus: 'pending' | 'applied' | 'disabled' | 'unsupported' | 'error' = 'pending';
 let alwaysOnTop = true;
 let overlayVisible = true;
+let autoPasteEnabled = true;
 let updateInstallRequested = false;
+let clipboardPollingTimer: NodeJS.Timeout | null = null;
+let lastClipboardSignature = '';
+let ignoreClipboardUntil = 0;
 
 function normalizeUrl(input: string): string {
   const value = input.trim();
@@ -23,7 +28,7 @@ function normalizeUrl(input: string): string {
 function updateBrowserBounds(): void {
   if (!mainWindow || !browserView) return;
   const [width, height] = mainWindow.getContentSize();
-  browserView.setBounds({ x: Math.floor(width * 0.38), y: 72, width: Math.floor(width * 0.62), height: Math.max(0, height - 72) });
+  browserView.setBounds({ x: 0, y: 72, width, height: Math.max(0, height - 72) });
 }
 
 function syncBrowserUrl(): void {
@@ -36,7 +41,13 @@ function sendUpdateStatus(status: string, version?: string): void {
 }
 
 function sendOverlayState(): void {
-  mainWindow?.webContents.send('overlay:state-changed', { protectedMode, protectionStatus, alwaysOnTop, visible: overlayVisible });
+  mainWindow?.webContents.send('overlay:state-changed', {
+    protectedMode,
+    protectionStatus,
+    alwaysOnTop,
+    visible: overlayVisible,
+    autoPasteEnabled,
+  });
 }
 
 function getNativeWindowHandleHex(): string | null {
@@ -101,6 +112,93 @@ function applyProtection(enabled: boolean): boolean {
   }
 }
 
+function isChatGptUrl(): boolean {
+  if (!browserView) return false;
+  try {
+    const hostname = new URL(browserView.webContents.getURL()).hostname.toLowerCase();
+    return hostname === 'chatgpt.com' || hostname === 'www.chatgpt.com' || hostname === 'chat.openai.com';
+  } catch {
+    return false;
+  }
+}
+
+async function focusChatGptComposer(): Promise<boolean> {
+  if (!browserView || browserView.webContents.isDestroyed() || !isChatGptUrl()) return false;
+
+  try {
+    return Boolean(await browserView.webContents.executeJavaScript(`(() => {
+      const selectors = [
+        '[data-testid="prompt-textarea"]',
+        '#prompt-textarea',
+        '[contenteditable="true"][data-lexical-editor="true"]',
+        'div[contenteditable="true"].ProseMirror',
+        'textarea[placeholder*="Ask"]',
+        'textarea[placeholder*="Message"]'
+      ];
+      const element = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+      if (!element) return false;
+      const editable = element as HTMLElement;
+      editable.focus();
+      editable.scrollIntoView({ block: 'nearest' });
+      return document.activeElement === editable || editable.contains(document.activeElement);
+    })()`));
+  } catch (error) {
+    console.error('[Clipboard] Could not focus ChatGPT composer:', error);
+    return false;
+  }
+}
+
+function getClipboardSignature(): { signature: string; kind: 'text' | 'image' | null } {
+  const text = clipboard.readText();
+  const image = clipboard.readImage();
+
+  if (!image.isEmpty()) {
+    const hash = createHash('sha1').update(image.toPNG()).digest('hex');
+    return { signature: `image:${hash}`, kind: 'image' };
+  }
+
+  if (text) return { signature: `text:${createHash('sha1').update(text, 'utf8').digest('hex')}`, kind: 'text' };
+  return { signature: '', kind: null };
+}
+
+async function pasteClipboardIntoChatGpt(kind: 'text' | 'image'): Promise<void> {
+  if (!browserView || !autoPasteEnabled || !isChatGptUrl()) return;
+  if (Date.now() < ignoreClipboardUntil) return;
+
+  const focused = await focusChatGptComposer();
+  if (!focused) {
+    console.warn(`[Clipboard] ChatGPT composer not found; ${kind} was not pasted.`);
+    return;
+  }
+
+  try {
+    browserView.webContents.paste();
+    console.log(`[Clipboard] Auto-pasted ${kind} into ChatGPT.`);
+  } catch (error) {
+    console.error(`[Clipboard] Failed to paste ${kind} into ChatGPT:`, error);
+  }
+}
+
+function startClipboardMonitor(): void {
+  if (clipboardPollingTimer) return;
+  const initial = getClipboardSignature();
+  lastClipboardSignature = initial.signature;
+
+  clipboardPollingTimer = setInterval(() => {
+    if (!autoPasteEnabled || !isChatGptUrl()) return;
+    const current = getClipboardSignature();
+    if (!current.signature || current.signature === lastClipboardSignature) return;
+    lastClipboardSignature = current.signature;
+    if (current.kind) void pasteClipboardIntoChatGpt(current.kind);
+  }, 750);
+}
+
+function stopClipboardMonitor(): void {
+  if (!clipboardPollingTimer) return;
+  clearInterval(clipboardPollingTimer);
+  clipboardPollingTimer = null;
+}
+
 function createBrowserView(): void {
   if (!mainWindow || browserView) return;
   browserView = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -109,6 +207,11 @@ function createBrowserView(): void {
   browserView.webContents.on('did-navigate', syncBrowserUrl);
   browserView.webContents.on('did-navigate-in-page', syncBrowserUrl);
   browserView.webContents.on('did-finish-load', syncBrowserUrl);
+  browserView.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'c') {
+      ignoreClipboardUntil = Date.now() + 1500;
+    }
+  });
   void browserView.webContents.loadURL('https://example.com');
   updateBrowserBounds();
 }
@@ -146,44 +249,22 @@ function setupAutoUpdater(): void {
   if (isDev) return;
 
   autoUpdater.autoDownload = true;
-  // Do not let electron-updater install a cached update merely because the user
-  // closes the app. Installation is controlled by update-downloaded below.
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = false;
 
-  autoUpdater.on('checking-for-update', () => {
-    console.log('[Updater] checking-for-update');
-    sendUpdateStatus('checking');
-  });
-
-  autoUpdater.on('update-available', (info) => {
-    console.log(`[Updater] update-available: ${info.version}`);
-    sendUpdateStatus('available', info.version);
-  });
-
-  autoUpdater.on('update-not-available', (info) => {
-    console.log(`[Updater] update-not-available: ${info.version}`);
-    sendUpdateStatus('current', info.version);
-  });
-
-  autoUpdater.on('download-progress', (progress) => {
-    console.log(`[Updater] download-progress: ${progress.percent.toFixed(1)}%`);
-    sendUpdateStatus(`downloading:${Math.round(progress.percent)}`);
-  });
-
+  autoUpdater.on('checking-for-update', () => { console.log('[Updater] checking-for-update'); sendUpdateStatus('checking'); });
+  autoUpdater.on('update-available', (info) => { console.log(`[Updater] update-available: ${info.version}`); sendUpdateStatus('available', info.version); });
+  autoUpdater.on('update-not-available', (info) => { console.log(`[Updater] update-not-available: ${info.version}`); sendUpdateStatus('current', info.version); });
+  autoUpdater.on('download-progress', (progress) => { console.log(`[Updater] download-progress: ${progress.percent.toFixed(1)}%`); sendUpdateStatus(`downloading:${Math.round(progress.percent)}`); });
   autoUpdater.on('update-downloaded', (info) => {
     const currentVersion = app.getVersion();
     console.log(`[Updater] update-downloaded: ${info.version}; current=${currentVersion}`);
-
-    // Never reinstall the same version. This also prevents a cached installer
-    // from causing an install loop every time the app is closed.
     if (info.version === currentVersion || updateInstallRequested) {
       console.log('[Updater] ignoring duplicate/cached update');
       sendUpdateStatus('current', currentVersion);
       return;
     }
-
     updateInstallRequested = true;
     sendUpdateStatus('downloaded', info.version);
     setTimeout(() => {
@@ -192,24 +273,14 @@ function setupAutoUpdater(): void {
       autoUpdater.quitAndInstall(false, true);
     }, 1000);
   });
-
-  autoUpdater.on('error', (error) => {
-    console.error('[Updater] error:', error);
-    updateInstallRequested = false;
-    sendUpdateStatus('error');
-  });
-
-  setTimeout(() => {
-    void autoUpdater.checkForUpdates().catch((error) => {
-      console.error('[Updater] check failed:', error);
-      sendUpdateStatus('error');
-    });
-  }, 3000);
+  autoUpdater.on('error', (error) => { console.error('[Updater] error:', error); updateInstallRequested = false; sendUpdateStatus('error'); });
+  setTimeout(() => { void autoUpdater.checkForUpdates().catch((error) => { console.error('[Updater] check failed:', error); sendUpdateStatus('error'); }); }, 3000);
 }
 
-ipcMain.handle('overlay:get-state', () => ({ protectedMode, protectionStatus, alwaysOnTop, visible: overlayVisible }));
+ipcMain.handle('overlay:get-state', () => ({ protectedMode, protectionStatus, alwaysOnTop, visible: overlayVisible, autoPasteEnabled }));
 ipcMain.handle('overlay:set-protection', (_event, enabled: boolean) => { applyProtection(enabled); return protectedMode; });
 ipcMain.handle('overlay:set-always-on-top', (_event, enabled: boolean) => { alwaysOnTop = enabled; mainWindow?.setAlwaysOnTop(enabled); sendOverlayState(); return alwaysOnTop; });
+ipcMain.handle('overlay:set-auto-paste', (_event, enabled: boolean) => { autoPasteEnabled = enabled; sendOverlayState(); return autoPasteEnabled; });
 ipcMain.handle('overlay:toggle', () => { overlayVisible = !overlayVisible; if (overlayVisible) mainWindow?.show(); else mainWindow?.hide(); sendOverlayState(); return overlayVisible; });
 ipcMain.handle('browser:navigate', (_event, url: string) => { const target = normalizeUrl(url); void browserView?.webContents.loadURL(target); return target; });
 ipcMain.handle('browser:back', () => browserView?.webContents.canGoBack() && browserView.webContents.goBack());
@@ -222,10 +293,14 @@ ipcMain.handle('app:install-update', () => { if (!isDev) autoUpdater.quitAndInst
 
 app.whenReady().then(() => {
   createWindow();
+  startClipboardMonitor();
   setupAutoUpdater();
   globalShortcut.register('CommandOrControl+Shift+Space', () => { overlayVisible = !overlayVisible; if (overlayVisible) mainWindow?.show(); else mainWindow?.hide(); sendOverlayState(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  stopClipboardMonitor();
+  globalShortcut.unregisterAll();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
