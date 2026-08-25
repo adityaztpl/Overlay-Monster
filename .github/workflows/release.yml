@@ -21,29 +21,41 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
 
       - name: Install dependencies
         run: npm install
+
+      - name: Read app version
+        id: version
+        shell: pwsh
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> $env:GITHUB_OUTPUT
 
       - name: Build Electron and web
         run: npm run build
 
       - name: Package Windows installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win nsis --x64 --publish never
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v5
         with:
-          name: overlay-monster-windows
-          path: release/*.exe
+          name: overlay-monster-windows-${{ steps.version.outputs.version }}
+          path: |
+            release/*.exe
+            release/latest.yml
 
-      - name: Publish latest GitHub Release
+      - name: Publish versioned GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Overlay Monster - Latest
-          body: Latest Windows build of Overlay Monster.
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Overlay Monster v${{ steps.version.outputs.version }}
+          body: Windows release v${{ steps.version.outputs.version }}.
           prerelease: false
           make_latest: true
-          files: release/*.exe
-          overwrite_files: true
+          files: |
+            release/Overlay-Monster-Setup.exe
+            release/latest.yml
+          fail_on_unmatched_files: true
