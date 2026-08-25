@@ -3,7 +3,7 @@ import type { OverlayState } from './types';
 
 const fallbackState: OverlayState = { protectedMode: true, alwaysOnTop: true, visible: true };
 const demoSites = ['https://example.com', 'https://developer.mozilla.org', 'https://react.dev'];
-const downloadUrl = 'https://github.com/adityaztpl/Overlay-Monster/releases/download/latest/Overlay-Monster-Setup.exe';
+const downloadUrl = 'https://github.com/adityaztpl/Overlay-Monster/releases/latest/download/Overlay-Monster-Setup.exe';
 
 function normalizeUrl(value: string): string {
   const trimmed = value.trim();
@@ -26,6 +26,8 @@ export default function App(): JSX.Element {
   const [demoUrl, setDemoUrl] = useState('https://example.com');
   const [aiPrompt, setAiPrompt] = useState('');
   const [answer, setAnswer] = useState('AI panel ready. Connect your provider API to stream responses.');
+  const [appVersion, setAppVersion] = useState('');
+  const [updateStatus, setUpdateStatus] = useState('');
   const native = Boolean(window.overlay && window.browser);
   const webPreviewBlocked = useMemo(() => !isEmbeddableDemo(demoUrl), [demoUrl]);
 
@@ -33,6 +35,18 @@ export default function App(): JSX.Element {
     if (!native) return;
     void window.overlay!.getState().then(setState);
     void window.browser!.getUrl().then((value) => value && setUrl(value));
+    if (window.appApi) {
+      void window.appApi.getVersion().then(setAppVersion);
+      const removeUpdateListener = window.appApi.onUpdateStatus(({ status, version }) => {
+        setUpdateStatus(version ? `${status}:${version}` : status);
+      });
+      return () => removeUpdateListener();
+    }
+    return undefined;
+  }, [native]);
+
+  useEffect(() => {
+    if (!native) return;
     const removeShortcutListener = window.overlay!.onShortcutToggle(() =>
       setState((current) => ({ ...current, visible: !current.visible })),
     );
@@ -82,6 +96,12 @@ export default function App(): JSX.Element {
     setState((current) => ({ ...current, alwaysOnTop: value }));
   };
 
+  const updateLabel = updateStatus.startsWith('available') || updateStatus.startsWith('downloaded')
+    ? 'Update ready'
+    : updateStatus.startsWith('downloading')
+      ? `Updating ${updateStatus.split(':')[1] ?? ''}%`
+      : `v${appVersion}`;
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -93,6 +113,7 @@ export default function App(): JSX.Element {
           <button type="button" onClick={() => native ? void window.browser!.reload() : void navigate()}>↻</button>
         </form>
         <a className="download-button" href={downloadUrl}>Download for Windows ↓</a>
+        {native && <button className="version-button" type="button" onClick={() => void window.appApi?.checkForUpdates()}>{updateLabel}</button>}
         <div className="security"><span className="dot" /> {state.protectedMode ? 'Protected' : 'Protection off'}</div>
       </header>
 
