@@ -92,20 +92,29 @@ export default function App() {
   };
 
   const protectionLabel = state.protectionStatus === 'applied'
-    ? 'Capture protected'
+    ? 'Protected'
     : state.protectionStatus === 'disabled'
       ? 'Protection off'
       : state.protectionStatus === 'unsupported'
-        ? 'Protection unsupported'
+        ? 'Unsupported'
         : state.protectionStatus === 'error'
           ? 'Protection error'
-          : 'Applying protection…';
+          : 'Applying…';
 
-  const updateLabel = updateStatus.startsWith('available') || updateStatus.startsWith('downloaded')
-    ? 'Update ready'
-    : updateStatus.startsWith('downloading')
-      ? `Updating ${updateStatus.split(':')[1] ?? ''}%`
-      : `v${appVersion}`;
+  const updateType = updateStatus.split(':')[0];
+  const updateValue = updateStatus.split(':')[1] ?? '';
+  const isDownloading = updateType === 'downloading';
+  const isUpdateReady = updateType === 'available' || updateType === 'downloaded';
+  const isChecking = updateType === 'checking';
+  const updateLabel = isDownloading
+    ? `Downloading ${updateValue}%`
+    : updateType === 'downloaded'
+      ? 'Restart to update'
+      : updateType === 'available'
+        ? 'Update available'
+        : isChecking
+          ? 'Checking…'
+          : `v${appVersion}`;
 
   return (
     <main className="app-shell">
@@ -123,21 +132,37 @@ export default function App() {
         </form>
 
         {!native && <a className="download-button" href={downloadUrl}>Download for Windows ↓</a>}
-        {native && <button className="version-button" type="button" onClick={() => void window.appApi?.checkForUpdates()}>{updateLabel}</button>}
 
         {native && (
-          <div className="top-controls">
-            <label className="control-chip" title="Exclude this window from supported Windows screen capture">
+          <div className="native-actions">
+            <button
+              className={`update-control ${isUpdateReady ? 'is-ready' : ''}`}
+              type="button"
+              onClick={() => void window.appApi?.checkForUpdates()}
+              title={isDownloading ? 'Downloading the latest version' : 'Check for updates'}
+            >
+              <span className="update-icon">↻</span>
+              <span className="update-copy">
+                <strong>{updateLabel}</strong>
+                {!isDownloading && !isChecking && <small>Overlay Monster</small>}
+              </span>
+              {isDownloading && <span className="update-progress"><span style={{ width: `${Math.min(100, Math.max(0, Number(updateValue) || 0))}%` }} /></span>}
+            </button>
+
+            <label className={`status-control protection ${state.protectionStatus === 'applied' ? 'is-active' : ''}`} title="Exclude this window from supported Windows screen capture">
               <input type="checkbox" checked={state.protectedMode} onChange={(e) => void setProtection(e.target.checked)} />
-              <span>🛡 {protectionLabel}</span>
+              <span className="status-dot" />
+              <span>{protectionLabel}</span>
             </label>
-            <label className="control-chip" title="Paste new clipboard text or screenshots into ChatGPT when ChatGPT is open">
+
+            <label className={`icon-control ${state.autoPasteEnabled ? 'is-active' : ''}`} title="Paste new clipboard text or screenshots into ChatGPT">
               <input type="checkbox" checked={state.autoPasteEnabled} onChange={(e) => void setAutoPaste(e.target.checked)} />
-              <span>📋 Auto-paste</span>
+              <span>📋</span>
             </label>
-            <label className="control-chip" title="Keep Overlay Monster above other windows">
+
+            <label className={`icon-control ${state.alwaysOnTop ? 'is-active' : ''}`} title="Keep Overlay Monster above other windows">
               <input type="checkbox" checked={state.alwaysOnTop} onChange={(e) => void setTop(e.target.checked)} />
-              <span>📌 Top</span>
+              <span>📌</span>
             </label>
           </div>
         )}
