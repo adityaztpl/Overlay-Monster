@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: overlay-monster-release
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -59,3 +63,4 @@ jobs:
             release/Overlay-Monster-Setup.exe
             release/latest.yml
           fail_on_unmatched_files: true
+          overwrite_files: true
