@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -39,9 +37,12 @@ jobs:
           name: overlay-monster-windows
           path: release/*.exe
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish latest GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          tag_name: latest
+          name: Overlay Monster - Latest
+          body: Latest Windows build of Overlay Monster.
+          prerelease: false
+          make_latest: true
           files: release/*.exe
