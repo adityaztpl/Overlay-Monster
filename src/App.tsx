@@ -32,7 +32,14 @@ export default function App(): JSX.Element {
     if (!native) return;
     void window.overlay!.getState().then(setState);
     void window.browser!.getUrl().then((value) => value && setUrl(value));
-    return window.overlay!.onShortcutToggle(() => setState((current) => ({ ...current, visible: !current.visible })));
+    const removeShortcutListener = window.overlay!.onShortcutToggle(() =>
+      setState((current) => ({ ...current, visible: !current.visible })),
+    );
+    const removeUrlListener = window.browser!.onUrlChanged((value) => setUrl(value));
+    return () => {
+      removeShortcutListener();
+      removeUrlListener();
+    };
   }, [native]);
 
   const navigate = async (event?: FormEvent) => {
@@ -51,6 +58,10 @@ export default function App(): JSX.Element {
   const selectDemoSite = (site: string) => {
     setUrl(site);
     setDemoUrl(site);
+  };
+
+  const openInCurrentTab = () => {
+    window.location.assign(demoUrl);
   };
 
   const askAI = (event: FormEvent) => {
@@ -111,11 +122,11 @@ export default function App(): JSX.Element {
               {webPreviewBlocked ? (
                 <div className="preview-fallback">
                   <div className="preview-icon">↗</div>
-                  <h2>Site cannot be embedded here</h2>
+                  <h2>This site blocks iframe embedding</h2>
                   <p>{demoUrl}</p>
-                  <span>This Vercel preview runs inside a normal browser. Sites can block iframe embedding with CSP or X-Frame-Options.</span>
-                  <a href={demoUrl} target="_blank" rel="noreferrer">Open site in a new tab ↗</a>
-                  <small>The Electron build uses a native WebContentsView and is the full browser experience.</small>
+                  <span>Browser security headers such as CSP or X-Frame-Options prevent a normal web app from rendering this site inside an iframe.</span>
+                  <button type="button" onClick={openInCurrentTab}>Open in current tab ↗</button>
+                  <small>For the full in-app browser surface, run the Electron build. It uses WebContentsView and loads the site directly.</small>
                 </div>
               ) : (
                 <iframe title="Browser preview" src={demoUrl} />
