@@ -21,9 +21,17 @@ export interface BrowserAPI {
   onUrlChanged(callback: (url: string) => void): () => void;
 }
 
+export interface AppAPI {
+  getVersion(): Promise<string>;
+  checkForUpdates(): Promise<{ status: string }>;
+  installUpdate(): Promise<boolean>;
+  onUpdateStatus(callback: (payload: { status: string; version?: string }) => void): () => void;
+}
+
 declare global {
   interface Window {
     overlay?: OverlayAPI;
     browser?: BrowserAPI;
+    appApi?: AppAPI;
   }
 }
