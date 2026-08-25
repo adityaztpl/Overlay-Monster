@@ -20,29 +20,27 @@ let lastClipboardSignature = '';
 let ignoreClipboardUntil = 0;
 let clipboardCheckInProgress = false;
 
+const startupLogPath = path.join(app.getPath('userData'), 'startup.log');
+function logStartup(message: string, error?: unknown): void {
+  const detail = error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ''}` : error ? String(error) : '';
+  const line = `[${new Date().toISOString()}] ${message}${detail ? ` ${detail}` : ''}\n`;
+  try { fs.appendFileSync(startupLogPath, line, 'utf8'); } catch { /* startup logging must never block startup */ }
+  console.log(line.trim());
+}
+
+process.on('uncaughtException', (error) => logStartup('uncaughtException', error));
+process.on('unhandledRejection', (reason) => logStartup('unhandledRejection', reason));
+
+// Avoid renderer startup crashes on machines with problematic GPU drivers.
+app.disableHardwareAcceleration();
+
 type ClipboardRuntime = {
   readText: () => string | Promise<string>;
   readImage?: () => { isEmpty: () => boolean; toPNG: () => Buffer };
   availableFormats?: () => string[];
   readBuffer?: (format: string) => Buffer;
 };
-
 const runtimeClipboard = clipboard as unknown as ClipboardRuntime;
-
-function logStartup(message: string, error?: unknown): void {
-  const line = `[${new Date().toISOString()}] ${message}${error ? ` ${error instanceof Error ? error.stack ?? error.message : String(error)}` : ''}\n`;
-  console.log(line.trimEnd());
-  try {
-    const logDir = app.getPath('userData');
-    fs.mkdirSync(logDir, { recursive: true });
-    fs.appendFileSync(path.join(logDir, 'startup.log'), line, 'utf8');
-  } catch {
-    // Logging must never prevent startup.
-  }
-}
-
-process.on('uncaughtException', (error) => logStartup('uncaughtException', error));
-process.on('unhandledRejection', (reason) => logStartup('unhandledRejection', reason));
 
 function normalizeUrl(input: string): string {
   const value = input.trim();
@@ -111,11 +109,7 @@ function verifyWindowsCaptureExclusion(): boolean {
 function applyProtection(enabled: boolean): boolean {
   protectedMode = enabled;
   if (!mainWindow) { protectionStatus = 'pending'; return false; }
-  if (process.platform !== 'win32') {
-    protectionStatus = enabled ? 'unsupported' : 'disabled';
-    sendOverlayState();
-    return !enabled;
-  }
+  if (process.platform !== 'win32') { protectionStatus = enabled ? 'unsupported' : 'disabled'; sendOverlayState(); return !enabled; }
   try {
     mainWindow.setContentProtection(enabled);
     if (!enabled) { protectionStatus = 'disabled'; sendOverlayState(); return true; }
@@ -137,9 +131,7 @@ function isChatGptUrl(): boolean {
   try {
     const hostname = new URL(browserView.webContents.getURL()).hostname.toLowerCase();
     return hostname === 'chatgpt.com' || hostname === 'www.chatgpt.com' || hostname === 'chat.openai.com';
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 async function focusChatGptComposer(): Promise<boolean> {
@@ -150,32 +142,23 @@ async function focusChatGptComposer(): Promise<boolean> {
       const element = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
       if (!element) return false;
       const editable = element as HTMLElement;
-      editable.focus();
-      editable.scrollIntoView({ block: 'nearest' });
+      editable.focus(); editable.scrollIntoView({ block: 'nearest' });
       return document.activeElement === editable || editable.contains(document.activeElement);
     })()`));
-  } catch (error) {
-    console.error('[Clipboard] Could not focus ChatGPT composer:', error);
-    return false;
-  }
+  } catch (error) { console.error('[Clipboard] Could not focus ChatGPT composer:', error); return false; }
 }
 
 async function getClipboardSignature(): Promise<{ signature: string; kind: 'text' | 'image' | null }> {
   const text = await Promise.resolve(runtimeClipboard.readText());
   if (runtimeClipboard.readImage) {
-    try {
-      const image = runtimeClipboard.readImage();
-      if (!image.isEmpty()) return { signature: `image:${createHash('sha1').update(image.toPNG()).digest('hex')}`, kind: 'image' };
-    } catch (error) { console.error('[Clipboard] Could not read image:', error); }
+    try { const image = runtimeClipboard.readImage(); if (!image.isEmpty()) return { signature: `image:${createHash('sha1').update(image.toPNG()).digest('hex')}`, kind: 'image' }; }
+    catch (error) { console.error('[Clipboard] Could not read image:', error); }
   }
   if (runtimeClipboard.availableFormats && runtimeClipboard.readBuffer) {
     try {
       const formats = runtimeClipboard.availableFormats();
       const imageFormat = formats.find((format) => format.toLowerCase().startsWith('image/'));
-      if (imageFormat) {
-        const imageBuffer = runtimeClipboard.readBuffer(imageFormat);
-        if (imageBuffer.length > 0) return { signature: `image:${createHash('sha1').update(imageBuffer).digest('hex')}`, kind: 'image' };
-      }
+      if (imageFormat) { const imageBuffer = runtimeClipboard.readBuffer(imageFormat); if (imageBuffer.length > 0) return { signature: `image:${createHash('sha1').update(imageBuffer).digest('hex')}`, kind: 'image' }; }
     } catch (error) { console.error('[Clipboard] Could not read image format:', error); }
   }
   if (text) return { signature: `text:${createHash('sha1').update(text, 'utf8').digest('hex')}`, kind: 'text' };
@@ -184,8 +167,7 @@ async function getClipboardSignature(): Promise<{ signature: string; kind: 'text
 
 async function pasteClipboardIntoChatGpt(kind: 'text' | 'image'): Promise<void> {
   if (!browserView || !autoPasteEnabled || !isChatGptUrl() || Date.now() < ignoreClipboardUntil) return;
-  const focused = await focusChatGptComposer();
-  if (!focused) return;
+  if (!await focusChatGptComposer()) return;
   try { browserView.webContents.paste(); console.log(`[Clipboard] Auto-pasted ${kind} into ChatGPT.`); }
   catch (error) { console.error(`[Clipboard] Failed to paste ${kind} into ChatGPT:`, error); }
 }
@@ -207,16 +189,11 @@ function startClipboardMonitor(): void {
   void getClipboardSignature().then((initial) => { lastClipboardSignature = initial.signature; }).catch((error) => console.error('[Clipboard] Initial read failed:', error));
   clipboardPollingTimer = setInterval(() => { void checkClipboard(); }, 750);
 }
-
-function stopClipboardMonitor(): void {
-  if (!clipboardPollingTimer) return;
-  clearInterval(clipboardPollingTimer);
-  clipboardPollingTimer = null;
-}
+function stopClipboardMonitor(): void { if (!clipboardPollingTimer) return; clearInterval(clipboardPollingTimer); clipboardPollingTimer = null; }
 
 function createBrowserView(): void {
   if (!mainWindow || browserView) return;
-  browserView = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  browserView = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false } });
   mainWindow.contentView.addChildView(browserView);
   browserView.webContents.setWindowOpenHandler(({ url }) => { void browserView?.webContents.loadURL(url); return { action: 'deny' }; });
   browserView.webContents.on('did-navigate', syncBrowserUrl);
@@ -233,7 +210,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1100, minHeight: 700, show: true, alwaysOnTop, skipTaskbar: process.platform === 'win32', autoHideMenuBar: true,
     title: `Overlay Monster v${app.getVersion()}`,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
   });
   mainWindow.on('closed', () => { browserView = null; mainWindow = null; });
   mainWindow.on('resize', updateBrowserBounds);
@@ -247,7 +224,6 @@ function createWindow(): void {
   mainWindow.webContents.on('did-finish-load', () => { logStartup('renderer did-finish-load'); createBrowserView(); sendOverlayState(); });
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => { logStartup(`renderer did-fail-load: ${errorCode} ${errorDescription} ${validatedURL}`); mainWindow?.show(); });
   mainWindow.webContents.on('render-process-gone', (_event, details) => { logStartup(`renderer render-process-gone: ${details.reason}`); mainWindow?.show(); });
-
   const rendererPath = path.join(__dirname, '../renderer/index.html');
   if (!isDev && !fs.existsSync(rendererPath)) {
     const message = `Renderer file missing: ${rendererPath}`;
@@ -263,16 +239,11 @@ function createWindow(): void {
 function setupAutoUpdater(): void {
   if (isDev) return;
   autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = false; autoUpdater.allowDowngrade = false; autoUpdater.allowPrerelease = false;
-  autoUpdater.on('checking-for-update', () => { console.log('[Updater] checking-for-update'); sendUpdateStatus('checking'); });
-  autoUpdater.on('update-available', (info) => { console.log(`[Updater] update-available: ${info.version}`); sendUpdateStatus('available', info.version); });
-  autoUpdater.on('update-not-available', (info) => { console.log(`[Updater] update-not-available: ${info.version}`); sendUpdateStatus('current', info.version); });
-  autoUpdater.on('download-progress', (progress) => { console.log(`[Updater] download-progress: ${progress.percent.toFixed(1)}%`); sendUpdateStatus(`downloading:${Math.round(progress.percent)}`); });
-  autoUpdater.on('update-downloaded', (info) => {
-    const currentVersion = app.getVersion();
-    if (info.version === currentVersion || updateInstallRequested) { sendUpdateStatus('current', currentVersion); return; }
-    updateInstallRequested = true; sendUpdateStatus('downloaded', info.version);
-    setTimeout(() => { if (app.isReady()) autoUpdater.quitAndInstall(false, true); }, 1000);
-  });
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
+  autoUpdater.on('update-not-available', (info) => sendUpdateStatus('current', info.version));
+  autoUpdater.on('download-progress', (progress) => sendUpdateStatus(`downloading:${Math.round(progress.percent)}`));
+  autoUpdater.on('update-downloaded', (info) => { const currentVersion = app.getVersion(); if (info.version === currentVersion || updateInstallRequested) { sendUpdateStatus('current', currentVersion); return; } updateInstallRequested = true; sendUpdateStatus('downloaded', info.version); setTimeout(() => { if (app.isReady()) autoUpdater.quitAndInstall(false, true); }, 1000); });
   autoUpdater.on('error', (error) => { console.error('[Updater] error:', error); updateInstallRequested = false; sendUpdateStatus('error'); });
   setTimeout(() => { void autoUpdater.checkForUpdates().catch((error) => { console.error('[Updater] check failed:', error); sendUpdateStatus('error'); }); }, 3000);
 }
