@@ -5,12 +5,14 @@ export interface OverlayState {
   protectionStatus: ProtectionStatus;
   alwaysOnTop: boolean;
   visible: boolean;
+  autoPasteEnabled: boolean;
 }
 
 export interface OverlayAPI {
   getState(): Promise<OverlayState>;
   setProtection(enabled: boolean): Promise<boolean>;
   setAlwaysOnTop(enabled: boolean): Promise<boolean>;
+  setAutoPaste(enabled: boolean): Promise<boolean>;
   toggle(): Promise<boolean>;
   onStateChanged(callback: (state: OverlayState) => void): () => void;
   onShortcutToggle(callback: () => void): () => void;
