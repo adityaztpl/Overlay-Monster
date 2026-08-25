@@ -1,6 +1,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, WebContentsView } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 
 const isDev = !app.isPackaged;
@@ -122,10 +123,7 @@ function createWindow(): void {
   mainWindow.setAlwaysOnTop(alwaysOnTop);
   mainWindow.on('resize', updateBrowserBounds);
 
-  // Electron's current BrowserWindow typings do not expose the Windows
-  // minimize event, although Electron emits it at runtime. Use a typed
-  // compatibility listener instead of leaking an implicit any parameter.
-  const windowEvents = mainWindow as unknown as Electron.EventEmitter;
+  const windowEvents = mainWindow as unknown as EventEmitter;
   windowEvents.on('minimize', (event: Electron.Event) => {
     if (!protectedMode || !overlayVisible) return;
     event.preventDefault();
