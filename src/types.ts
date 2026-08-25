@@ -1,5 +1,8 @@
+export type ProtectionStatus = 'pending' | 'applied' | 'disabled' | 'unsupported' | 'error';
+
 export interface OverlayState {
   protectedMode: boolean;
+  protectionStatus: ProtectionStatus;
   alwaysOnTop: boolean;
   visible: boolean;
 }
@@ -9,6 +12,7 @@ export interface OverlayAPI {
   setProtection(enabled: boolean): Promise<boolean>;
   setAlwaysOnTop(enabled: boolean): Promise<boolean>;
   toggle(): Promise<boolean>;
+  onStateChanged(callback: (state: OverlayState) => void): () => void;
   onShortcutToggle(callback: () => void): () => void;
 }
 
