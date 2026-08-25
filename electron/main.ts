@@ -6,6 +6,7 @@ const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let browserView: WebContentsView | null = null;
 let protectedMode = true;
+let protectionStatus: 'pending' | 'applied' | 'disabled' | 'unsupported' | 'error' = 'pending';
 let alwaysOnTop = true;
 let overlayVisible = true;
 
@@ -36,30 +37,41 @@ function sendUpdateStatus(status: string, version?: string): void {
   mainWindow?.webContents.send('app:update-status', { status, version });
 }
 
-function setupAutoUpdater(): void {
-  if (isDev) return;
-
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-
-  autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
-  autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
-  autoUpdater.on('update-not-available', () => sendUpdateStatus('current', app.getVersion()));
-  autoUpdater.on('download-progress', (progress) => {
-    sendUpdateStatus(`downloading:${Math.round(progress.percent)}`);
+function sendOverlayState(): void {
+  mainWindow?.webContents.send('overlay:state-changed', {
+    protectedMode,
+    protectionStatus,
+    alwaysOnTop,
+    visible: overlayVisible,
   });
-  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
-  autoUpdater.on('error', (error) => {
-    console.error('Auto update failed:', error);
-    sendUpdateStatus('error');
-  });
+}
 
-  setTimeout(() => {
-    void autoUpdater.checkForUpdatesAndNotify().catch((error) => {
-      console.error('Auto update check failed:', error);
-      sendUpdateStatus('error');
-    });
-  }, 5000);
+function applyProtection(enabled: boolean): boolean {
+  protectedMode = enabled;
+
+  if (!mainWindow) {
+    protectionStatus = 'pending';
+    return false;
+  }
+
+  if (process.platform !== 'win32' && enabled) {
+    // Electron supports content protection on supported desktop platforms, but
+    // this app's capture-protection target is Windows.
+    protectionStatus = 'unsupported';
+    return false;
+  }
+
+  try {
+    mainWindow.setContentProtection(enabled);
+    protectionStatus = enabled ? 'applied' : 'disabled';
+    sendOverlayState();
+    return true;
+  } catch (error) {
+    protectionStatus = 'error';
+    console.error('Failed to apply content protection:', error);
+    sendOverlayState();
+    return false;
+  }
 }
 
 function createBrowserView(): void {
@@ -96,6 +108,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     alwaysOnTop,
+    skipTaskbar: process.platform === 'win32',
     autoHideMenuBar: true,
     title: `Overlay Monster v${app.getVersion()}`,
     webPreferences: {
@@ -106,44 +119,111 @@ function createWindow(): void {
     },
   });
 
+  // Apply capture protection before the first frame can be shown.
+  applyProtection(protectedMode);
+  mainWindow.setAlwaysOnTop(alwaysOnTop);
+
   mainWindow.on('resize', updateBrowserBounds);
+
+  // In protected mode, minimizing hides the overlay instead of leaving a
+  // minimized entry behind. Ctrl+Shift+Space restores it.
+  mainWindow.on('minimize', (event) => {
+    if (!protectedMode || !overlayVisible) return;
+    event.preventDefault();
+    overlayVisible = false;
+    mainWindow?.hide();
+    sendOverlayState();
+  });
+
+  mainWindow.on('show', () => {
+    overlayVisible = true;
+    sendOverlayState();
+  });
+
+  mainWindow.on('hide', () => {
+    overlayVisible = false;
+    sendOverlayState();
+  });
 
   mainWindow.webContents.on('did-finish-load', () => {
     createBrowserView();
+    sendOverlayState();
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error(`Renderer failed to load: ${errorCode} ${errorDescription}`);
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    // Protection was applied before show. Re-apply after renderer creation as
+    // a defensive sync point for packaged builds.
+    applyProtection(protectedMode);
+    mainWindow?.show();
+  });
 
   if (isDev) void mainWindow.loadURL('http://localhost:5173');
   else void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
 
-ipcMain.handle('overlay:get-state', () => ({ protectedMode, alwaysOnTop, visible: overlayVisible }));
+function setupAutoUpdater(): void {
+  if (isDev) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
+  autoUpdater.on('update-not-available', () => sendUpdateStatus('current', app.getVersion()));
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateStatus(`downloading:${Math.round(progress.percent)}`);
+  });
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
+  autoUpdater.on('error', (error) => {
+    console.error('Auto update failed:', error);
+    sendUpdateStatus('error');
+  });
+
+  setTimeout(() => {
+    void autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+      console.error('Auto update check failed:', error);
+      sendUpdateStatus('error');
+    });
+  }, 5000);
+}
+
+ipcMain.handle('overlay:get-state', () => ({
+  protectedMode,
+  protectionStatus,
+  alwaysOnTop,
+  visible: overlayVisible,
+}));
+
 ipcMain.handle('overlay:set-protection', (_event, enabled: boolean) => {
-  protectedMode = enabled;
-  mainWindow?.setContentProtection(enabled);
+  applyProtection(enabled);
   return protectedMode;
 });
+
 ipcMain.handle('overlay:set-always-on-top', (_event, enabled: boolean) => {
   alwaysOnTop = enabled;
   mainWindow?.setAlwaysOnTop(enabled);
+  sendOverlayState();
   return alwaysOnTop;
 });
+
 ipcMain.handle('overlay:toggle', () => {
   overlayVisible = !overlayVisible;
   if (overlayVisible) mainWindow?.show();
   else mainWindow?.hide();
+  sendOverlayState();
   return overlayVisible;
 });
+
 ipcMain.handle('browser:navigate', (_event, url: string) => {
   const target = normalizeUrl(url);
   void browserView?.webContents.loadURL(target);
   return target;
 });
+
 ipcMain.handle('browser:back', () => browserView?.webContents.canGoBack() && browserView.webContents.goBack());
 ipcMain.handle('browser:forward', () => browserView?.webContents.canGoForward() && browserView.webContents.goForward());
 ipcMain.handle('browser:reload', () => {
@@ -170,7 +250,7 @@ app.whenReady().then(() => {
     overlayVisible = !overlayVisible;
     if (overlayVisible) mainWindow?.show();
     else mainWindow?.hide();
-    mainWindow?.webContents.send('overlay:shortcut-toggle', overlayVisible);
+    sendOverlayState();
   });
 
   app.on('activate', () => {
