@@ -18,6 +18,7 @@ export interface BrowserAPI {
   forward(): Promise<boolean>;
   reload(): Promise<boolean>;
   getUrl(): Promise<string>;
+  onUrlChanged(callback: (url: string) => void): () => void;
 }
 
 declare global {
