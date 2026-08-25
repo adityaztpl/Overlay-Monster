@@ -14,6 +14,7 @@ type BrowserAPI = {
   forward(): Promise<boolean>;
   reload(): Promise<boolean>;
   getUrl(): Promise<string>;
+  onUrlChanged(callback: (url: string) => void): () => void;
 };
 
 const overlay: OverlayAPI = {
@@ -34,6 +35,11 @@ const browser: BrowserAPI = {
   forward: () => ipcRenderer.invoke('browser:forward'),
   reload: () => ipcRenderer.invoke('browser:reload'),
   getUrl: () => ipcRenderer.invoke('browser:get-url'),
+  onUrlChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on('browser:url-changed', listener);
+    return () => ipcRenderer.removeListener('browser:url-changed', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('overlay', overlay);
