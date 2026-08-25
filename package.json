@@ -3,6 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "description": "Protected AI overlay browser desktop application.",
+  "author": "Aditya Shinde",
   "main": "dist/electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -14,7 +15,6 @@
     "dist:win": "npm run build && electron-builder --win nsis --x64"
   },
   "dependencies": {
-    "electron": "latest",
     "react": "latest",
     "react-dom": "latest"
   },
@@ -23,6 +23,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
+    "electron": "latest",
     "electron-builder": "latest",
     "typescript": "latest",
     "vite": "latest"
