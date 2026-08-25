@@ -19,6 +19,15 @@ let lastClipboardSignature = '';
 let ignoreClipboardUntil = 0;
 let clipboardCheckInProgress = false;
 
+type ClipboardRuntime = {
+  readText: () => string | Promise<string>;
+  readImage?: () => { isEmpty: () => boolean; toPNG: () => Buffer };
+  availableFormats?: () => string[];
+  readBuffer?: (format: string) => Buffer;
+};
+
+const runtimeClipboard = clipboard as unknown as ClipboardRuntime;
+
 function normalizeUrl(input: string): string {
   const value = input.trim();
   if (/^https?:\/\//i.test(value)) return value;
@@ -150,19 +159,36 @@ async function focusChatGptComposer(): Promise<boolean> {
 }
 
 async function getClipboardSignature(): Promise<{ signature: string; kind: 'text' | 'image' | null }> {
-  const text = await clipboard.readText();
-  const formats = clipboard.availableFormats();
-  const imageFormat = formats.find((format) => format.toLowerCase().startsWith('image/'));
+  const text = await Promise.resolve(runtimeClipboard.readText());
 
-  if (imageFormat) {
+  // Electron versions expose image clipboard APIs differently in their TypeScript
+  // declarations. Use the runtime compatibility layer above so CI does not depend
+  // on a specific Electron declaration shape.
+  if (runtimeClipboard.readImage) {
     try {
-      const imageBuffer = clipboard.readBuffer(imageFormat);
-      if (imageBuffer.length > 0) {
-        const hash = createHash('sha1').update(imageBuffer).digest('hex');
+      const image = runtimeClipboard.readImage();
+      if (!image.isEmpty()) {
+        const hash = createHash('sha1').update(image.toPNG()).digest('hex');
         return { signature: `image:${hash}`, kind: 'image' };
       }
     } catch (error) {
-      console.error('[Clipboard] Could not read image format:', imageFormat, error);
+      console.error('[Clipboard] Could not read image:', error);
+    }
+  }
+
+  if (runtimeClipboard.availableFormats && runtimeClipboard.readBuffer) {
+    try {
+      const formats: string[] = runtimeClipboard.availableFormats();
+      const imageFormat: string | undefined = formats.find((format: string) => format.toLowerCase().startsWith('image/'));
+      if (imageFormat) {
+        const imageBuffer = runtimeClipboard.readBuffer(imageFormat);
+        if (imageBuffer.length > 0) {
+          const hash = createHash('sha1').update(imageBuffer).digest('hex');
+          return { signature: `image:${hash}`, kind: 'image' };
+        }
+      }
+    } catch (error) {
+      console.error('[Clipboard] Could not read image format:', error);
     }
   }
 
