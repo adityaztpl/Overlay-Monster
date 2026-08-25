@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { OverlayState } from './types';
 
-const fallbackState: OverlayState = { protectedMode: true, alwaysOnTop: true, visible: true };
+const fallbackState: OverlayState = { protectedMode: true, protectionStatus: 'pending', alwaysOnTop: true, visible: true };
 const demoSites = ['https://example.com', 'https://developer.mozilla.org', 'https://react.dev'];
 const downloadUrl = 'https://github.com/adityaztpl/Overlay-Monster/releases/latest/download/Overlay-Monster-Setup.exe';
 
@@ -35,26 +35,27 @@ export default function App(): JSX.Element {
     if (!native) return;
     void window.overlay!.getState().then(setState);
     void window.browser!.getUrl().then((value) => value && setUrl(value));
+
+    const removeStateListener = window.overlay!.onStateChanged(setState);
+    let removeUpdateListener: (() => void) | undefined;
+
     if (window.appApi) {
       void window.appApi.getVersion().then(setAppVersion);
-      const removeUpdateListener = window.appApi.onUpdateStatus(({ status, version }) => {
+      removeUpdateListener = window.appApi.onUpdateStatus(({ status, version }) => {
         setUpdateStatus(version ? `${status}:${version}` : status);
       });
-      return () => removeUpdateListener();
     }
-    return undefined;
+
+    return () => {
+      removeStateListener();
+      removeUpdateListener?.();
+    };
   }, [native]);
 
   useEffect(() => {
     if (!native) return;
-    const removeShortcutListener = window.overlay!.onShortcutToggle(() =>
-      setState((current) => ({ ...current, visible: !current.visible })),
-    );
     const removeUrlListener = window.browser!.onUrlChanged((value) => setUrl(value));
-    return () => {
-      removeShortcutListener();
-      removeUrlListener();
-    };
+    return () => removeUrlListener();
   }, [native]);
 
   const navigate = async (event?: FormEvent) => {
@@ -87,14 +88,32 @@ export default function App(): JSX.Element {
   };
 
   const setProtection = async (enabled: boolean) => {
-    const value = native ? await window.overlay!.setProtection(enabled) : enabled;
-    setState((current) => ({ ...current, protectedMode: value }));
+    if (native) await window.overlay!.setProtection(enabled);
+    setState((current) => ({
+      ...current,
+      protectedMode: enabled,
+      protectionStatus: enabled ? 'pending' : 'disabled',
+    }));
+    if (native) {
+      const next = await window.overlay!.getState();
+      setState(next);
+    }
   };
 
   const setTop = async (enabled: boolean) => {
     const value = native ? await window.overlay!.setAlwaysOnTop(enabled) : enabled;
     setState((current) => ({ ...current, alwaysOnTop: value }));
   };
+
+  const protectionLabel = state.protectionStatus === 'applied'
+    ? 'Capture protected'
+    : state.protectionStatus === 'disabled'
+      ? 'Protection off'
+      : state.protectionStatus === 'unsupported'
+        ? 'Protection unsupported'
+        : state.protectionStatus === 'error'
+          ? 'Protection error'
+          : 'Applying protection…';
 
   const updateLabel = updateStatus.startsWith('available') || updateStatus.startsWith('downloaded')
     ? 'Update ready'
@@ -114,7 +133,9 @@ export default function App(): JSX.Element {
         </form>
         <a className="download-button" href={downloadUrl}>Download for Windows ↓</a>
         {native && <button className="version-button" type="button" onClick={() => void window.appApi?.checkForUpdates()}>{updateLabel}</button>}
-        <div className="security"><span className="dot" /> {state.protectedMode ? 'Protected' : 'Protection off'}</div>
+        <div className={`security ${state.protectionStatus === 'applied' ? 'active' : ''}`}>
+          <span className="dot" /> {protectionLabel}
+        </div>
       </header>
 
       <section className="layout">
