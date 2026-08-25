@@ -11,3 +11,18 @@ export interface OverlayAPI {
   toggle(): Promise<boolean>;
   onShortcutToggle(callback: () => void): () => void;
 }
+
+export interface BrowserAPI {
+  navigate(url: string): Promise<string>;
+  back(): Promise<boolean>;
+  forward(): Promise<boolean>;
+  reload(): Promise<boolean>;
+  getUrl(): Promise<string>;
+}
+
+declare global {
+  interface Window {
+    overlay?: OverlayAPI;
+    browser?: BrowserAPI;
+  }
+}

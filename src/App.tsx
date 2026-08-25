@@ -1,74 +1,84 @@
-import { useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import type { OverlayState } from './types';
 
-const initialState: OverlayState = {
-  protectedMode: true,
-  alwaysOnTop: true,
-  visible: true,
-};
+const fallbackState: OverlayState = { protectedMode: true, alwaysOnTop: true, visible: true };
+const demoSites = ['https://example.com', 'https://developer.mozilla.org', 'https://react.dev'];
 
 export default function App(): JSX.Element {
-  const [state, setState] = useState<OverlayState>(initialState);
+  const [state, setState] = useState(fallbackState);
+  const [url, setUrl] = useState('https://example.com');
+  const [demoUrl, setDemoUrl] = useState('https://example.com');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [answer, setAnswer] = useState('AI panel ready. Connect your provider API to stream responses.');
+  const native = Boolean(window.overlay && window.browser);
 
   useEffect(() => {
-    void window.overlay.getState().then(setState);
-    return window.overlay.onShortcutToggle(() => {
-      setState((current) => ({ ...current, visible: !current.visible }));
-    });
-  }, []);
+    if (!native) return;
+    void window.overlay!.getState().then(setState);
+    void window.browser!.getUrl().then((value) => value && setUrl(value));
+    return window.overlay!.onShortcutToggle(() => setState((current) => ({ ...current, visible: !current.visible })));
+  }, [native]);
 
-  const setProtection = async (enabled: boolean) => {
-    const protectedMode = await window.overlay.setProtection(enabled);
-    setState((current) => ({ ...current, protectedMode }));
+  const navigate = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (native) {
+      const target = await window.browser!.navigate(url);
+      setUrl(target);
+    } else {
+      setDemoUrl(url);
+    }
   };
 
-  const setAlwaysOnTop = async (enabled: boolean) => {
-    const alwaysOnTop = await window.overlay.setAlwaysOnTop(enabled);
-    setState((current) => ({ ...current, alwaysOnTop }));
+  const askAI = (event: FormEvent) => {
+    event.preventDefault();
+    if (!aiPrompt.trim()) return;
+    setAnswer(`Ready for provider integration: “${aiPrompt.trim()}”`);
+    setAiPrompt('');
+  };
+
+  const setProtection = async (enabled: boolean) => {
+    const value = native ? await window.overlay!.setProtection(enabled) : enabled;
+    setState((current) => ({ ...current, protectedMode: value }));
+  };
+
+  const setTop = async (enabled: boolean) => {
+    const value = native ? await window.overlay!.setAlwaysOnTop(enabled) : enabled;
+    setState((current) => ({ ...current, alwaysOnTop: value }));
   };
 
   return (
-    <main className="shell">
-      <section className="panel">
-        <header className="header">
-          <div>
-            <span className="eyebrow">OVERLAY MONSTER</span>
-            <h1>Protected AI Workspace</h1>
-            <p>Secure Electron shell for AI-assisted browsing.</p>
-          </div>
-          <span className={`status ${state.protectedMode ? 'active' : ''}`}>
-            {state.protectedMode ? 'PROTECTED' : 'UNPROTECTED'}
-          </span>
-        </header>
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand"><span className="logo">◈</span><div><strong>Overlay Monster</strong><small>Protected AI Browser</small></div></div>
+        <form className="address" onSubmit={navigate}>
+          <button type="button" onClick={() => native && void window.browser!.back()}>‹</button>
+          <button type="button" onClick={() => native && void window.browser!.forward()}>›</button>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Address" />
+          <button type="button" onClick={() => native ? void window.browser!.reload() : void navigate()}>↻</button>
+        </form>
+        <div className="security"><span className="dot" /> {state.protectedMode ? 'Protected' : 'Protection off'}</div>
+      </header>
 
-        <div className="workspace">
-          <div className="workspace-card">
-            <span className="orb">AI</span>
-            <h2>Workspace ready</h2>
-            <p>Browser surface and provider routing will plug into this shell.</p>
+      <section className="layout">
+        <aside className="ai-panel">
+          <div className="panel-head"><div><span className="eyebrow">AI ASSISTANT</span><h1>Meeting Copilot</h1></div><span className="live">LIVE</span></div>
+          <div className="context-card"><span>◉</span><div><strong>Browser context</strong><small>Ready to analyze the current page</small></div></div>
+          <div className="answer"><span className="ai-mark">AI</span><p>{answer}</p></div>
+          <div className="quick-actions">
+            {['Summarize page', 'Extract key points', 'Explain this'].map((item) => <button key={item} onClick={() => setAnswer(`${item}: waiting for AI provider connection.`)}>{item}</button>)}
           </div>
-        </div>
+          <form className="prompt" onSubmit={askAI}><textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Ask AI anything..." /><button type="submit">Send ↗</button></form>
+          <div className="toggles">
+            <label><span>Content protection</span><input type="checkbox" checked={state.protectedMode} onChange={(e) => void setProtection(e.target.checked)} /></label>
+            <label><span>Always on top</span><input type="checkbox" checked={state.alwaysOnTop} onChange={(e) => void setTop(e.target.checked)} /></label>
+          </div>
+          <div className="shortcut"><kbd>Ctrl</kbd><b>+</b><kbd>Shift</kbd><b>+</b><kbd>Space</kbd><span>toggle overlay</span></div>
+        </aside>
 
-        <footer className="controls">
-          <label className="control">
-            <span>Content protection</span>
-            <input
-              type="checkbox"
-              checked={state.protectedMode}
-              onChange={(event) => void setProtection(event.target.checked)}
-            />
-          </label>
-          <label className="control">
-            <span>Always on top</span>
-            <input
-              type="checkbox"
-              checked={state.alwaysOnTop}
-              onChange={(event) => void setAlwaysOnTop(event.target.checked)}
-            />
-          </label>
-          <kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>Space</kbd>
-          <span className="hint">toggle overlay</span>
-        </footer>
+        <section className="browser-panel">
+          {!native && <div className="web-preview"><div className="demo-tabs">{demoSites.map((site) => <button key={site} onClick={() => { setUrl(site); setDemoUrl(site); }}>{new URL(site).hostname}</button>)}</div><iframe title="Browser preview" src={demoUrl} /></div>}
+          {native && <div className="native-browser"><div className="browser-note">Native Electron browser surface is active → {url}</div></div>}
+        </section>
       </section>
     </main>
   );
