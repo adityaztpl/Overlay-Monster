@@ -11,6 +11,7 @@ let protectedMode = true;
 let protectionStatus: 'pending' | 'applied' | 'disabled' | 'unsupported' | 'error' = 'pending';
 let alwaysOnTop = true;
 let overlayVisible = true;
+let updateInstallRequested = false;
 
 function normalizeUrl(input: string): string {
   const value = input.trim();
@@ -143,17 +144,67 @@ function createWindow(): void {
 
 function setupAutoUpdater(): void {
   if (isDev) return;
+
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Do not let electron-updater install a cached update merely because the user
+  // closes the app. Installation is controlled by update-downloaded below.
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = false;
-  autoUpdater.on('checking-for-update', () => { console.log('[Updater] checking-for-update'); sendUpdateStatus('checking'); });
-  autoUpdater.on('update-available', (info) => { console.log(`[Updater] update-available: ${info.version}`); sendUpdateStatus('available', info.version); });
-  autoUpdater.on('update-not-available', (info) => { console.log(`[Updater] update-not-available: ${info.version}`); sendUpdateStatus('current', info.version); });
-  autoUpdater.on('download-progress', (progress) => { console.log(`[Updater] download-progress: ${progress.percent.toFixed(1)}%`); sendUpdateStatus(`downloading:${Math.round(progress.percent)}`); });
-  autoUpdater.on('update-downloaded', (info) => { console.log(`[Updater] update-downloaded: ${info.version}`); sendUpdateStatus('downloaded', info.version); setTimeout(() => autoUpdater.quitAndInstall(false, true), 1000); });
-  autoUpdater.on('error', (error) => { console.error('[Updater] error:', error); sendUpdateStatus('error'); });
-  setTimeout(() => { void autoUpdater.checkForUpdates().catch((error) => { console.error('[Updater] check failed:', error); sendUpdateStatus('error'); }); }, 3000);
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[Updater] checking-for-update');
+    sendUpdateStatus('checking');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[Updater] update-available: ${info.version}`);
+    sendUpdateStatus('available', info.version);
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    console.log(`[Updater] update-not-available: ${info.version}`);
+    sendUpdateStatus('current', info.version);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`[Updater] download-progress: ${progress.percent.toFixed(1)}%`);
+    sendUpdateStatus(`downloading:${Math.round(progress.percent)}`);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    const currentVersion = app.getVersion();
+    console.log(`[Updater] update-downloaded: ${info.version}; current=${currentVersion}`);
+
+    // Never reinstall the same version. This also prevents a cached installer
+    // from causing an install loop every time the app is closed.
+    if (info.version === currentVersion || updateInstallRequested) {
+      console.log('[Updater] ignoring duplicate/cached update');
+      sendUpdateStatus('current', currentVersion);
+      return;
+    }
+
+    updateInstallRequested = true;
+    sendUpdateStatus('downloaded', info.version);
+    setTimeout(() => {
+      if (!app.isReady()) return;
+      console.log(`[Updater] installing ${info.version}`);
+      autoUpdater.quitAndInstall(false, true);
+    }, 1000);
+  });
+
+  autoUpdater.on('error', (error) => {
+    console.error('[Updater] error:', error);
+    updateInstallRequested = false;
+    sendUpdateStatus('error');
+  });
+
+  setTimeout(() => {
+    void autoUpdater.checkForUpdates().catch((error) => {
+      console.error('[Updater] check failed:', error);
+      sendUpdateStatus('error');
+    });
+  }, 3000);
 }
 
 ipcMain.handle('overlay:get-state', () => ({ protectedMode, protectionStatus, alwaysOnTop, visible: overlayVisible }));
