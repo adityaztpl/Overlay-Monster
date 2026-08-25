@@ -127,6 +127,28 @@ Keep the local Electron renderer on a restrictive CSP and do not add remote scri
 
 ---
 
+## Electron / TypeScript Compatibility
+
+### 2026-08-25 — Verify Electron event typings after dependency upgrades
+
+**Symptom**
+
+CI failed after the security refactor with Electron 43 TypeScript errors around `BrowserWindow` events and navigation handlers.
+
+**Root cause**
+
+Electron 43 typings differ from assumptions made from older Electron examples. `will-navigate` and `will-redirect` provide the URL string in this version, and the `minimize` event is not represented in the same overload set used by the current TypeScript definitions.
+
+**Fix**
+
+Use the Electron 43 callback signatures and explicitly type the minimize event where the type definitions do not expose the event overload.
+
+**Prevention**
+
+Run `npm run typecheck` after Electron version changes. Do not copy event signatures from another Electron major version without checking the installed typings.
+
+---
+
 ## Electron Release and Auto-Update
 
 ### 2026-08-25 — Do not use `latest` for `electron-updater`
