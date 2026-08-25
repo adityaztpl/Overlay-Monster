@@ -1,8 +1,9 @@
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, WebContentsView } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, WebContentsView } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const isDev = !app.isPackaged;
@@ -28,6 +29,21 @@ type ClipboardRuntime = {
 
 const runtimeClipboard = clipboard as unknown as ClipboardRuntime;
 
+function logStartup(message: string, error?: unknown): void {
+  const line = `[${new Date().toISOString()}] ${message}${error ? ` ${error instanceof Error ? error.stack ?? error.message : String(error)}` : ''}\n`;
+  console.log(line.trimEnd());
+  try {
+    const logDir = app.getPath('userData');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'startup.log'), line, 'utf8');
+  } catch {
+    // Logging must never prevent startup.
+  }
+}
+
+process.on('uncaughtException', (error) => logStartup('uncaughtException', error));
+process.on('unhandledRejection', (reason) => logStartup('unhandledRejection', reason));
+
 function normalizeUrl(input: string): string {
   const value = input.trim();
   if (/^https?:\/\//i.test(value)) return value;
@@ -51,13 +67,7 @@ function sendUpdateStatus(status: string, version?: string): void {
 }
 
 function sendOverlayState(): void {
-  mainWindow?.webContents.send('overlay:state-changed', {
-    protectedMode,
-    protectionStatus,
-    alwaysOnTop,
-    visible: overlayVisible,
-    autoPasteEnabled,
-  });
+  mainWindow?.webContents.send('overlay:state-changed', { protectedMode, protectionStatus, alwaysOnTop, visible: overlayVisible, autoPasteEnabled });
 }
 
 function getNativeWindowHandleHex(): string | null {
@@ -134,17 +144,9 @@ function isChatGptUrl(): boolean {
 
 async function focusChatGptComposer(): Promise<boolean> {
   if (!browserView || browserView.webContents.isDestroyed() || !isChatGptUrl()) return false;
-
   try {
     return Boolean(await browserView.webContents.executeJavaScript(`(() => {
-      const selectors = [
-        '[data-testid="prompt-textarea"]',
-        '#prompt-textarea',
-        '[contenteditable="true"][data-lexical-editor="true"]',
-        'div[contenteditable="true"].ProseMirror',
-        'textarea[placeholder*="Ask"]',
-        'textarea[placeholder*="Message"]'
-      ];
+      const selectors = ['[data-testid="prompt-textarea"]', '#prompt-textarea', '[contenteditable="true"][data-lexical-editor="true"]', 'div[contenteditable="true"].ProseMirror', 'textarea[placeholder*="Ask"]', 'textarea[placeholder*="Message"]'];
       const element = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
       if (!element) return false;
       const editable = element as HTMLElement;
@@ -160,58 +162,32 @@ async function focusChatGptComposer(): Promise<boolean> {
 
 async function getClipboardSignature(): Promise<{ signature: string; kind: 'text' | 'image' | null }> {
   const text = await Promise.resolve(runtimeClipboard.readText());
-
-  // Electron versions expose image clipboard APIs differently in their TypeScript
-  // declarations. Use the runtime compatibility layer above so CI does not depend
-  // on a specific Electron declaration shape.
   if (runtimeClipboard.readImage) {
     try {
       const image = runtimeClipboard.readImage();
-      if (!image.isEmpty()) {
-        const hash = createHash('sha1').update(image.toPNG()).digest('hex');
-        return { signature: `image:${hash}`, kind: 'image' };
-      }
-    } catch (error) {
-      console.error('[Clipboard] Could not read image:', error);
-    }
+      if (!image.isEmpty()) return { signature: `image:${createHash('sha1').update(image.toPNG()).digest('hex')}`, kind: 'image' };
+    } catch (error) { console.error('[Clipboard] Could not read image:', error); }
   }
-
   if (runtimeClipboard.availableFormats && runtimeClipboard.readBuffer) {
     try {
-      const formats: string[] = runtimeClipboard.availableFormats();
-      const imageFormat: string | undefined = formats.find((format: string) => format.toLowerCase().startsWith('image/'));
+      const formats = runtimeClipboard.availableFormats();
+      const imageFormat = formats.find((format) => format.toLowerCase().startsWith('image/'));
       if (imageFormat) {
         const imageBuffer = runtimeClipboard.readBuffer(imageFormat);
-        if (imageBuffer.length > 0) {
-          const hash = createHash('sha1').update(imageBuffer).digest('hex');
-          return { signature: `image:${hash}`, kind: 'image' };
-        }
+        if (imageBuffer.length > 0) return { signature: `image:${createHash('sha1').update(imageBuffer).digest('hex')}`, kind: 'image' };
       }
-    } catch (error) {
-      console.error('[Clipboard] Could not read image format:', error);
-    }
+    } catch (error) { console.error('[Clipboard] Could not read image format:', error); }
   }
-
   if (text) return { signature: `text:${createHash('sha1').update(text, 'utf8').digest('hex')}`, kind: 'text' };
   return { signature: '', kind: null };
 }
 
 async function pasteClipboardIntoChatGpt(kind: 'text' | 'image'): Promise<void> {
-  if (!browserView || !autoPasteEnabled || !isChatGptUrl()) return;
-  if (Date.now() < ignoreClipboardUntil) return;
-
+  if (!browserView || !autoPasteEnabled || !isChatGptUrl() || Date.now() < ignoreClipboardUntil) return;
   const focused = await focusChatGptComposer();
-  if (!focused) {
-    console.warn(`[Clipboard] ChatGPT composer not found; ${kind} was not pasted.`);
-    return;
-  }
-
-  try {
-    browserView.webContents.paste();
-    console.log(`[Clipboard] Auto-pasted ${kind} into ChatGPT.`);
-  } catch (error) {
-    console.error(`[Clipboard] Failed to paste ${kind} into ChatGPT:`, error);
-  }
+  if (!focused) return;
+  try { browserView.webContents.paste(); console.log(`[Clipboard] Auto-pasted ${kind} into ChatGPT.`); }
+  catch (error) { console.error(`[Clipboard] Failed to paste ${kind} into ChatGPT:`, error); }
 }
 
 async function checkClipboard(): Promise<void> {
@@ -222,11 +198,8 @@ async function checkClipboard(): Promise<void> {
     if (!current.signature || current.signature === lastClipboardSignature) return;
     lastClipboardSignature = current.signature;
     if (current.kind) await pasteClipboardIntoChatGpt(current.kind);
-  } catch (error) {
-    console.error('[Clipboard] Monitor check failed:', error);
-  } finally {
-    clipboardCheckInProgress = false;
-  }
+  } catch (error) { console.error('[Clipboard] Monitor check failed:', error); }
+  finally { clipboardCheckInProgress = false; }
 }
 
 function startClipboardMonitor(): void {
@@ -249,71 +222,56 @@ function createBrowserView(): void {
   browserView.webContents.on('did-navigate', syncBrowserUrl);
   browserView.webContents.on('did-navigate-in-page', syncBrowserUrl);
   browserView.webContents.on('did-finish-load', syncBrowserUrl);
-  browserView.webContents.on('before-input-event', (_event, input) => {
-    if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'c') {
-      ignoreClipboardUntil = Date.now() + 1500;
-    }
-  });
+  browserView.webContents.on('before-input-event', (_event, input) => { if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'c') ignoreClipboardUntil = Date.now() + 1500; });
+  browserView.webContents.on('render-process-gone', (_event, details) => logStartup(`browserView render-process-gone: ${details.reason}`));
   void browserView.webContents.loadURL('https://example.com');
   updateBrowserBounds();
 }
 
 function createWindow(): void {
+  logStartup(`createWindow: packaged=${app.isPackaged}, appPath=${app.getAppPath()}`);
   mainWindow = new BrowserWindow({
-    width: 1440, height: 900, minWidth: 1100, minHeight: 700, show: false, alwaysOnTop, skipTaskbar: process.platform === 'win32', autoHideMenuBar: true,
+    width: 1440, height: 900, minWidth: 1100, minHeight: 700, show: true, alwaysOnTop, skipTaskbar: process.platform === 'win32', autoHideMenuBar: true,
     title: `Overlay Monster v${app.getVersion()}`,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-
-  applyProtection(protectedMode);
-  mainWindow.setAlwaysOnTop(alwaysOnTop);
+  mainWindow.on('closed', () => { browserView = null; mainWindow = null; });
   mainWindow.on('resize', updateBrowserBounds);
-
   const windowEvents = mainWindow as unknown as EventEmitter;
   windowEvents.on('minimize', (event: Electron.Event) => {
     if (!protectedMode || !overlayVisible) return;
-    event.preventDefault();
-    overlayVisible = false;
-    mainWindow?.hide();
-    sendOverlayState();
+    event.preventDefault(); overlayVisible = false; mainWindow?.hide(); sendOverlayState();
   });
-
   mainWindow.on('show', () => { overlayVisible = true; if (protectedMode) applyProtection(true); sendOverlayState(); });
   mainWindow.on('hide', () => { overlayVisible = false; sendOverlayState(); });
-  mainWindow.webContents.on('did-finish-load', () => { createBrowserView(); sendOverlayState(); });
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => console.error(`Renderer failed to load: ${errorCode} ${errorDescription}`));
-  mainWindow.once('ready-to-show', () => { applyProtection(protectedMode); mainWindow?.show(); });
-  if (isDev) void mainWindow.loadURL('http://localhost:5173');
-  else void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  mainWindow.webContents.on('did-finish-load', () => { logStartup('renderer did-finish-load'); createBrowserView(); sendOverlayState(); });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => { logStartup(`renderer did-fail-load: ${errorCode} ${errorDescription} ${validatedURL}`); mainWindow?.show(); });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => { logStartup(`renderer render-process-gone: ${details.reason}`); mainWindow?.show(); });
+
+  const rendererPath = path.join(__dirname, '../renderer/index.html');
+  if (!isDev && !fs.existsSync(rendererPath)) {
+    const message = `Renderer file missing: ${rendererPath}`;
+    logStartup(message);
+    void dialog.showErrorBox('Overlay Monster startup error', `${message}\n\nOpen startup.log from the app data folder.`);
+    return;
+  }
+  if (isDev) void mainWindow.loadURL('http://localhost:5173').catch((error) => logStartup('Failed to load dev renderer', error));
+  else void mainWindow.loadFile(rendererPath).catch((error) => logStartup(`Failed to load packaged renderer: ${rendererPath}`, error));
+  try { applyProtection(protectedMode); } catch (error) { logStartup('Protection setup failed during startup', error); }
 }
 
 function setupAutoUpdater(): void {
   if (isDev) return;
-
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowDowngrade = false;
-  autoUpdater.allowPrerelease = false;
-
+  autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = false; autoUpdater.allowDowngrade = false; autoUpdater.allowPrerelease = false;
   autoUpdater.on('checking-for-update', () => { console.log('[Updater] checking-for-update'); sendUpdateStatus('checking'); });
   autoUpdater.on('update-available', (info) => { console.log(`[Updater] update-available: ${info.version}`); sendUpdateStatus('available', info.version); });
   autoUpdater.on('update-not-available', (info) => { console.log(`[Updater] update-not-available: ${info.version}`); sendUpdateStatus('current', info.version); });
   autoUpdater.on('download-progress', (progress) => { console.log(`[Updater] download-progress: ${progress.percent.toFixed(1)}%`); sendUpdateStatus(`downloading:${Math.round(progress.percent)}`); });
   autoUpdater.on('update-downloaded', (info) => {
     const currentVersion = app.getVersion();
-    console.log(`[Updater] update-downloaded: ${info.version}; current=${currentVersion}`);
-    if (info.version === currentVersion || updateInstallRequested) {
-      console.log('[Updater] ignoring duplicate/cached update');
-      sendUpdateStatus('current', currentVersion);
-      return;
-    }
-    updateInstallRequested = true;
-    sendUpdateStatus('downloaded', info.version);
-    setTimeout(() => {
-      if (!app.isReady()) return;
-      console.log(`[Updater] installing ${info.version}`);
-      autoUpdater.quitAndInstall(false, true);
-    }, 1000);
+    if (info.version === currentVersion || updateInstallRequested) { sendUpdateStatus('current', currentVersion); return; }
+    updateInstallRequested = true; sendUpdateStatus('downloaded', info.version);
+    setTimeout(() => { if (app.isReady()) autoUpdater.quitAndInstall(false, true); }, 1000);
   });
   autoUpdater.on('error', (error) => { console.error('[Updater] error:', error); updateInstallRequested = false; sendUpdateStatus('error'); });
   setTimeout(() => { void autoUpdater.checkForUpdates().catch((error) => { console.error('[Updater] check failed:', error); sendUpdateStatus('error'); }); }, 3000);
@@ -334,15 +292,11 @@ ipcMain.handle('app:check-for-updates', async () => { if (isDev) return { status
 ipcMain.handle('app:install-update', () => { if (!isDev) autoUpdater.quitAndInstall(false, true); return true; });
 
 app.whenReady().then(() => {
-  createWindow();
-  startClipboardMonitor();
-  setupAutoUpdater();
+  logStartup(`app ready: version=${app.getVersion()}`);
+  createWindow(); startClipboardMonitor(); setupAutoUpdater();
   globalShortcut.register('CommandOrControl+Shift+Space', () => { overlayVisible = !overlayVisible; if (overlayVisible) mainWindow?.show(); else mainWindow?.hide(); sendOverlayState(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-});
+}).catch((error) => { logStartup('app.whenReady failed', error); void dialog.showErrorBox('Overlay Monster startup error', String(error)); });
 
-app.on('will-quit', () => {
-  stopClipboardMonitor();
-  globalShortcut.unregisterAll();
-});
+app.on('will-quit', () => { stopClipboardMonitor(); globalShortcut.unregisterAll(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
