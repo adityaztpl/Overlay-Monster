@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - package.json
+      - .github/workflows/sync-lockfile.yml
   workflow_dispatch:
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
       - name: Commit lockfile when changed
         shell: bash
         run: |
-          if git diff --quiet -- package-lock.json; then
+          if [ -z "$(git status --porcelain -- package-lock.json)" ]; then
             echo 'package-lock.json is already current.'
             exit 0
           fi
