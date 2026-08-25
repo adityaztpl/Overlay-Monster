@@ -32,7 +32,7 @@ function syncBrowserUrl(): void {
 }
 
 function createBrowserView(): void {
-  if (!mainWindow) return;
+  if (!mainWindow || browserView) return;
 
   browserView = new WebContentsView({
     webPreferences: {
@@ -65,6 +65,8 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     alwaysOnTop,
+    autoHideMenuBar: true,
+    title: `Overlay Monster v${app.getVersion()}`,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -74,12 +76,19 @@ function createWindow(): void {
   });
 
   mainWindow.on('resize', updateBrowserBounds);
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    createBrowserView();
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error(`Renderer failed to load: ${errorCode} ${errorDescription}`);
+  });
+
   mainWindow.once('ready-to-show', () => mainWindow?.show());
 
   if (isDev) void mainWindow.loadURL('http://localhost:5173');
   else void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
-
-  createBrowserView();
 }
 
 ipcMain.handle('overlay:get-state', () => ({ protectedMode, alwaysOnTop, visible: overlayVisible }));
