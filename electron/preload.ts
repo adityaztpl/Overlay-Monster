@@ -6,12 +6,14 @@ type OverlayState = {
   protectionStatus: ProtectionStatus;
   alwaysOnTop: boolean;
   visible: boolean;
+  autoPasteEnabled: boolean;
 };
 
 type OverlayAPI = {
   getState(): Promise<OverlayState>;
   setProtection(enabled: boolean): Promise<boolean>;
   setAlwaysOnTop(enabled: boolean): Promise<boolean>;
+  setAutoPaste(enabled: boolean): Promise<boolean>;
   toggle(): Promise<boolean>;
   onStateChanged(callback: (state: OverlayState) => void): () => void;
   onShortcutToggle(callback: () => void): () => void;
@@ -37,6 +39,7 @@ const overlay: OverlayAPI = {
   getState: () => ipcRenderer.invoke('overlay:get-state'),
   setProtection: (enabled) => ipcRenderer.invoke('overlay:set-protection', enabled),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke('overlay:set-always-on-top', enabled),
+  setAutoPaste: (enabled) => ipcRenderer.invoke('overlay:set-auto-paste', enabled),
   toggle: () => ipcRenderer.invoke('overlay:toggle'),
   onStateChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, state: OverlayState) => callback(state);
