@@ -1,12 +1,14 @@
 {
   "name": "overlay-monster",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Protected AI overlay browser desktop application.",
   "main": "dist/electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.electron.json && vite build",
+    "build": "npm run build:electron && npm run build:web",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:web": "vite build --mode web",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "electron": "electron ."
   },
