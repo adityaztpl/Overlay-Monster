@@ -6,6 +6,13 @@ on:
       - main
     paths:
       - package.json
+      - electron/**
+      - src/**
+      - index.html
+      - vite.config.ts
+      - tsconfig.json
+      - tsconfig.electron.json
+      - .github/workflows/release.yml
   workflow_dispatch:
 
 concurrency:
@@ -38,6 +45,9 @@ jobs:
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Build Electron and web
         run: npm run build
