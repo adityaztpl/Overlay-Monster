@@ -1,6 +1,6 @@
 {
   "name": "overlay-monster",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Protected AI overlay browser desktop application.",
   "main": "dist/electron/main.js",
