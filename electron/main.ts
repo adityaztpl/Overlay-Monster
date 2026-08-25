@@ -1,4 +1,5 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, WebContentsView } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import path from 'node:path';
 
 const isDev = !app.isPackaged;
@@ -29,6 +30,36 @@ function updateBrowserBounds(): void {
 function syncBrowserUrl(): void {
   if (!mainWindow || !browserView) return;
   mainWindow.webContents.send('browser:url-changed', browserView.webContents.getURL());
+}
+
+function sendUpdateStatus(status: string, version?: string): void {
+  mainWindow?.webContents.send('app:update-status', { status, version });
+}
+
+function setupAutoUpdater(): void {
+  if (isDev) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus('available', info.version));
+  autoUpdater.on('update-not-available', () => sendUpdateStatus('current', app.getVersion()));
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateStatus(`downloading:${Math.round(progress.percent)}`);
+  });
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', info.version));
+  autoUpdater.on('error', (error) => {
+    console.error('Auto update failed:', error);
+    sendUpdateStatus('error');
+  });
+
+  setTimeout(() => {
+    void autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+      console.error('Auto update check failed:', error);
+      sendUpdateStatus('error');
+    });
+  }, 5000);
 }
 
 function createBrowserView(): void {
@@ -120,9 +151,20 @@ ipcMain.handle('browser:reload', () => {
   return true;
 });
 ipcMain.handle('browser:get-url', () => browserView?.webContents.getURL() ?? '');
+ipcMain.handle('app:get-version', () => app.getVersion());
+ipcMain.handle('app:check-for-updates', async () => {
+  if (isDev) return { status: 'dev' };
+  await autoUpdater.checkForUpdates();
+  return { status: 'checking' };
+});
+ipcMain.handle('app:install-update', () => {
+  if (!isDev) autoUpdater.quitAndInstall();
+  return true;
+});
 
 app.whenReady().then(() => {
   createWindow();
+  setupAutoUpdater();
 
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     overlayVisible = !overlayVisible;
