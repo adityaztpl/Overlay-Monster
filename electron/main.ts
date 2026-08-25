@@ -17,6 +17,7 @@ let updateInstallRequested = false;
 let clipboardPollingTimer: NodeJS.Timeout | null = null;
 let lastClipboardSignature = '';
 let ignoreClipboardUntil = 0;
+let clipboardCheckInProgress = false;
 
 function normalizeUrl(input: string): string {
   const value = input.trim();
@@ -148,13 +149,21 @@ async function focusChatGptComposer(): Promise<boolean> {
   }
 }
 
-function getClipboardSignature(): { signature: string; kind: 'text' | 'image' | null } {
-  const text = clipboard.readText();
-  const image = clipboard.readImage();
+async function getClipboardSignature(): Promise<{ signature: string; kind: 'text' | 'image' | null }> {
+  const text = await clipboard.readText();
+  const formats = clipboard.availableFormats();
+  const imageFormat = formats.find((format) => format.toLowerCase().startsWith('image/'));
 
-  if (!image.isEmpty()) {
-    const hash = createHash('sha1').update(image.toPNG()).digest('hex');
-    return { signature: `image:${hash}`, kind: 'image' };
+  if (imageFormat) {
+    try {
+      const imageBuffer = clipboard.readBuffer(imageFormat);
+      if (imageBuffer.length > 0) {
+        const hash = createHash('sha1').update(imageBuffer).digest('hex');
+        return { signature: `image:${hash}`, kind: 'image' };
+      }
+    } catch (error) {
+      console.error('[Clipboard] Could not read image format:', imageFormat, error);
+    }
   }
 
   if (text) return { signature: `text:${createHash('sha1').update(text, 'utf8').digest('hex')}`, kind: 'text' };
@@ -179,18 +188,25 @@ async function pasteClipboardIntoChatGpt(kind: 'text' | 'image'): Promise<void> 
   }
 }
 
-function startClipboardMonitor(): void {
-  if (clipboardPollingTimer) return;
-  const initial = getClipboardSignature();
-  lastClipboardSignature = initial.signature;
-
-  clipboardPollingTimer = setInterval(() => {
-    if (!autoPasteEnabled || !isChatGptUrl()) return;
-    const current = getClipboardSignature();
+async function checkClipboard(): Promise<void> {
+  if (clipboardCheckInProgress || !autoPasteEnabled || !isChatGptUrl()) return;
+  clipboardCheckInProgress = true;
+  try {
+    const current = await getClipboardSignature();
     if (!current.signature || current.signature === lastClipboardSignature) return;
     lastClipboardSignature = current.signature;
-    if (current.kind) void pasteClipboardIntoChatGpt(current.kind);
-  }, 750);
+    if (current.kind) await pasteClipboardIntoChatGpt(current.kind);
+  } catch (error) {
+    console.error('[Clipboard] Monitor check failed:', error);
+  } finally {
+    clipboardCheckInProgress = false;
+  }
+}
+
+function startClipboardMonitor(): void {
+  if (clipboardPollingTimer) return;
+  void getClipboardSignature().then((initial) => { lastClipboardSignature = initial.signature; }).catch((error) => console.error('[Clipboard] Initial read failed:', error));
+  clipboardPollingTimer = setInterval(() => { void checkClipboard(); }, 750);
 }
 
 function stopClipboardMonitor(): void {
