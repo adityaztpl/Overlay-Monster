@@ -2,22 +2,18 @@ name: Release Windows App
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - package.json
-      - electron/**
-      - src/**
-      - index.html
-      - vite.config.ts
-      - tsconfig.json
-      - tsconfig.electron.json
-      - .github/workflows/release.yml
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without the v prefix, for example 0.2.9'
+        required: true
+        type: string
 
 concurrency:
   group: overlay-monster-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -37,14 +33,28 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
-        run: npm install
+        shell: pwsh
+        run: |
+          if (Test-Path package-lock.json) {
+            npm ci
+          } else {
+            npm install
+          }
 
-      - name: Read app version
+      - name: Read and validate app version
         id: version
         shell: pwsh
         run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          "version=$version" >> $env:GITHUB_OUTPUT
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $releaseVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            $releaseVersion = '${{ inputs.version }}'
+          }
+          if ($packageVersion -ne $releaseVersion) {
+            throw "package.json version ($packageVersion) does not match release version ($releaseVersion)."
+          }
+          "version=$releaseVersion" >> $env:GITHUB_OUTPUT
 
       - name: Typecheck
         run: npm run typecheck
@@ -53,9 +63,13 @@ jobs:
         run: npm run build
 
       - name: Package Windows installer
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "release/Overlay-Monster-Setup.exe")) { throw 'Installer was not generated.' }
+          if (-not (Test-Path "release/latest.yml")) { throw 'latest.yml was not generated.' }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v5
