@@ -290,8 +290,12 @@ function configureRemoteSession(): void {
       callback(false);
       return;
     }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      callback(false);
+      return;
+    }
 
-    void dialog.showMessageBox(mainWindow ?? undefined, {
+    void dialog.showMessageBox(mainWindow, {
       type: 'question',
       buttons: ['Allow', 'Deny'],
       defaultId: 1,
@@ -320,11 +324,11 @@ function createBrowserView(): void {
     return { action: 'deny' };
   });
 
-  browserView.webContents.on('will-navigate', (event, details) => {
-    if (!isAllowedRemoteUrl(details.url)) event.preventDefault();
+  browserView.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedRemoteUrl(url)) event.preventDefault();
   });
-  browserView.webContents.on('will-redirect', (event, details) => {
-    if (!isAllowedRemoteUrl(details.url)) event.preventDefault();
+  browserView.webContents.on('will-redirect', (event, url) => {
+    if (!isAllowedRemoteUrl(url)) event.preventDefault();
   });
   browserView.webContents.on('did-navigate', syncBrowserUrl);
   browserView.webContents.on('did-navigate-in-page', syncBrowserUrl);
@@ -365,7 +369,7 @@ function createWindow(): void {
     mainWindow = null;
   });
   mainWindow.on('resize', updateBrowserBounds);
-  mainWindow.on('minimize', (event) => {
+  mainWindow.on('minimize' as any, (event: Electron.Event) => {
     if (!protectedMode || !overlayVisible) return;
     event.preventDefault();
     overlayVisible = false;
