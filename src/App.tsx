@@ -20,7 +20,7 @@ function isEmbeddableDemo(value: string): boolean {
   }
 }
 
-export default function App(): JSX.Element {
+export default function App() {
   const [state, setState] = useState(fallbackState);
   const [url, setUrl] = useState('https://example.com');
   const [demoUrl, setDemoUrl] = useState('https://example.com');
@@ -89,15 +89,8 @@ export default function App(): JSX.Element {
 
   const setProtection = async (enabled: boolean) => {
     if (native) await window.overlay!.setProtection(enabled);
-    setState((current) => ({
-      ...current,
-      protectedMode: enabled,
-      protectionStatus: enabled ? 'pending' : 'disabled',
-    }));
-    if (native) {
-      const next = await window.overlay!.getState();
-      setState(next);
-    }
+    setState((current) => ({ ...current, protectedMode: enabled, protectionStatus: enabled ? 'pending' : 'disabled' }));
+    if (native) setState(await window.overlay!.getState());
   };
 
   const setTop = async (enabled: boolean) => {
@@ -133,9 +126,7 @@ export default function App(): JSX.Element {
         </form>
         <a className="download-button" href={downloadUrl}>Download for Windows ↓</a>
         {native && <button className="version-button" type="button" onClick={() => void window.appApi?.checkForUpdates()}>{updateLabel}</button>}
-        <div className={`security ${state.protectionStatus === 'applied' ? 'active' : ''}`}>
-          <span className="dot" /> {protectionLabel}
-        </div>
+        <div className={`security ${state.protectionStatus === 'applied' ? 'active' : ''}`}><span className="dot" /> {protectionLabel}</div>
       </header>
 
       <section className="layout">
@@ -143,9 +134,7 @@ export default function App(): JSX.Element {
           <div className="panel-head"><div><span className="eyebrow">AI ASSISTANT</span><h1>Meeting Copilot</h1></div><span className="live">LIVE</span></div>
           <div className="context-card"><span>◉</span><div><strong>Browser context</strong><small>Ready to analyze the current page</small></div></div>
           <div className="answer"><span className="ai-mark">AI</span><p>{answer}</p></div>
-          <div className="quick-actions">
-            {['Summarize page', 'Extract key points', 'Explain this'].map((item) => <button key={item} onClick={() => setAnswer(`${item}: waiting for AI provider connection.`)}>{item}</button>)}
-          </div>
+          <div className="quick-actions">{['Summarize page', 'Extract key points', 'Explain this'].map((item) => <button key={item} onClick={() => setAnswer(`${item}: waiting for AI provider connection.`)}>{item}</button>)}</div>
           <form className="prompt" onSubmit={askAI}><textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Ask AI anything..." /><button type="submit">Send ↗</button></form>
           <div className="toggles">
             <label><span>Content protection</span><input type="checkbox" checked={state.protectedMode} onChange={(e) => void setProtection(e.target.checked)} /></label>
@@ -155,28 +144,7 @@ export default function App(): JSX.Element {
         </aside>
 
         <section className="browser-panel">
-          {!native && (
-            <div className="web-preview">
-              <div className="demo-tabs">
-                {demoSites.map((site) => (
-                  <button key={site} onClick={() => selectDemoSite(site)}>{new URL(site).hostname}</button>
-                ))}
-              </div>
-
-              {webPreviewBlocked ? (
-                <div className="preview-fallback">
-                  <div className="preview-icon">↗</div>
-                  <h2>This site blocks iframe embedding</h2>
-                  <p>{demoUrl}</p>
-                  <span>Browser security headers such as CSP or X-Frame-Options prevent a normal web app from rendering this site inside an iframe.</span>
-                  <button type="button" onClick={openInCurrentTab}>Open in current tab ↗</button>
-                  <small>For the full in-app browser surface, run the Electron build. It uses WebContentsView and loads the site directly.</small>
-                </div>
-              ) : (
-                <iframe title="Browser preview" src={demoUrl} />
-              )}
-            </div>
-          )}
+          {!native && <div className="web-preview"><div className="demo-tabs">{demoSites.map((site) => <button key={site} onClick={() => selectDemoSite(site)}>{new URL(site).hostname}</button>)}</div>{webPreviewBlocked ? <div className="preview-fallback"><div className="preview-icon">↗</div><h2>This site blocks iframe embedding</h2><p>{demoUrl}</p><span>Browser security headers such as CSP or X-Frame-Options prevent a normal web app from rendering this site inside an iframe.</span><button type="button" onClick={openInCurrentTab}>Open in current tab ↗</button><small>For the full in-app browser surface, run the Electron build. It uses WebContentsView and loads the site directly.</small></div> : <iframe title="Browser preview" src={demoUrl} />}</div>}
           {native && <div className="native-browser"><div className="browser-note">Native Electron browser surface is active → {url}</div></div>}
         </section>
       </section>
