@@ -18,11 +18,22 @@ function normalizeUrl(input: string): string {
 function updateBrowserBounds(): void {
   if (!mainWindow || !browserView) return;
   const [width, height] = mainWindow.getContentSize();
-  browserView.setBounds({ x: Math.floor(width * 0.38), y: 72, width: Math.floor(width * 0.62), height: Math.max(0, height - 72) });
+  browserView.setBounds({
+    x: Math.floor(width * 0.38),
+    y: 72,
+    width: Math.floor(width * 0.62),
+    height: Math.max(0, height - 72),
+  });
+}
+
+function syncBrowserUrl(): void {
+  if (!mainWindow || !browserView) return;
+  mainWindow.webContents.send('browser:url-changed', browserView.webContents.getURL());
 }
 
 function createBrowserView(): void {
   if (!mainWindow) return;
+
   browserView = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
@@ -30,11 +41,18 @@ function createBrowserView(): void {
       sandbox: true,
     },
   });
+
   mainWindow.contentView.addChildView(browserView);
+
   browserView.webContents.setWindowOpenHandler(({ url }) => {
     void browserView?.webContents.loadURL(url);
     return { action: 'deny' };
   });
+
+  browserView.webContents.on('did-navigate', syncBrowserUrl);
+  browserView.webContents.on('did-navigate-in-page', syncBrowserUrl);
+  browserView.webContents.on('did-finish-load', syncBrowserUrl);
+
   void browserView.webContents.loadURL('https://example.com');
   updateBrowserBounds();
 }
@@ -46,7 +64,7 @@ function createWindow(): void {
     minWidth: 1100,
     minHeight: 700,
     show: false,
-    alwaysOnTop: alwaysOnTop,
+    alwaysOnTop,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,7 +95,8 @@ ipcMain.handle('overlay:set-always-on-top', (_event, enabled: boolean) => {
 });
 ipcMain.handle('overlay:toggle', () => {
   overlayVisible = !overlayVisible;
-  if (overlayVisible) mainWindow?.show(); else mainWindow?.hide();
+  if (overlayVisible) mainWindow?.show();
+  else mainWindow?.hide();
   return overlayVisible;
 });
 ipcMain.handle('browser:navigate', (_event, url: string) => {
@@ -87,16 +106,22 @@ ipcMain.handle('browser:navigate', (_event, url: string) => {
 });
 ipcMain.handle('browser:back', () => browserView?.webContents.canGoBack() && browserView.webContents.goBack());
 ipcMain.handle('browser:forward', () => browserView?.webContents.canGoForward() && browserView.webContents.goForward());
-ipcMain.handle('browser:reload', () => { browserView?.webContents.reload(); return true; });
+ipcMain.handle('browser:reload', () => {
+  browserView?.webContents.reload();
+  return true;
+});
 ipcMain.handle('browser:get-url', () => browserView?.webContents.getURL() ?? '');
 
 app.whenReady().then(() => {
   createWindow();
+
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     overlayVisible = !overlayVisible;
-    if (overlayVisible) mainWindow?.show(); else mainWindow?.hide();
+    if (overlayVisible) mainWindow?.show();
+    else mainWindow?.hide();
     mainWindow?.webContents.send('overlay:shortcut-toggle', overlayVisible);
   });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
