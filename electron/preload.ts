@@ -1,10 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+type ProtectionStatus = 'pending' | 'applied' | 'disabled' | 'unsupported' | 'error';
+type OverlayState = {
+  protectedMode: boolean;
+  protectionStatus: ProtectionStatus;
+  alwaysOnTop: boolean;
+  visible: boolean;
+};
+
 type OverlayAPI = {
-  getState(): Promise<{ protectedMode: boolean; alwaysOnTop: boolean; visible: boolean }>;
+  getState(): Promise<OverlayState>;
   setProtection(enabled: boolean): Promise<boolean>;
   setAlwaysOnTop(enabled: boolean): Promise<boolean>;
   toggle(): Promise<boolean>;
+  onStateChanged(callback: (state: OverlayState) => void): () => void;
   onShortcutToggle(callback: () => void): () => void;
 };
 
@@ -29,6 +38,11 @@ const overlay: OverlayAPI = {
   setProtection: (enabled) => ipcRenderer.invoke('overlay:set-protection', enabled),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke('overlay:set-always-on-top', enabled),
   toggle: () => ipcRenderer.invoke('overlay:toggle'),
+  onStateChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: OverlayState) => callback(state);
+    ipcRenderer.on('overlay:state-changed', listener);
+    return () => ipcRenderer.removeListener('overlay:state-changed', listener);
+  },
   onShortcutToggle: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('overlay:shortcut-toggle', listener);
