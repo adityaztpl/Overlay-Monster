@@ -9,31 +9,51 @@ This file records mistakes, fixes, and lessons learned while developing Overlay 
 3. Record the root cause, fix, and prevention rule.
 4. Do not delete old lessons unless they are proven obsolete.
 
+## Electron UI / Renderer
+
+### 2026-08-25 — Vite Electron builds must use relative asset paths
+
+**Symptom**
+
+The packaged Electron app showed a blank white renderer area while the native `WebContentsView` loaded the browser page correctly.
+
+**Root cause**
+
+Electron loads the renderer with:
+
+```text
+file://.../dist/renderer/index.html
+```
+
+Vite's default `base` is `/`. That generates root-relative assets such as `/assets/index.js`. Under `file://`, those paths resolve incorrectly, so the React renderer JavaScript does not load.
+
+**Fix**
+
+Use a relative Vite base for the Electron build:
+
+```ts
+base: mode === 'electron' ? './' : '/',
+```
+
+Keep `/` for the normal Vercel/web build.
+
+**Prevention**
+
+Whenever a Vite app is loaded with `BrowserWindow.loadFile()`, verify production asset paths are relative.
+
+---
+
 ## Electron Release and Auto-Update
 
 ### 2026-08-25 — Do not use `latest` for `electron-updater`
 
 **Symptom**
 
-`electron-builder` failed with:
-
-```text
-At least electron-updater 4.0.0 is recommended by current electron-builder version.
-Please set electron-updater version to "^4.0.0".
-Received "latest"
-```
-
-**Root cause**
-
-`package.json` used:
-
-```json
-"electron-updater": "latest"
-```
+`electron-builder` failed with an incompatibility error because `electron-updater` was set to `latest`.
 
 **Fix**
 
-Use a compatible explicit range:
+Use:
 
 ```json
 "electron-updater": "^4.0.0"
@@ -41,110 +61,56 @@ Use a compatible explicit range:
 
 **Prevention**
 
-Do not use `latest` for tightly coupled Electron build/runtime packages. Pin a compatible semver range.
+Do not use `latest` for tightly coupled Electron build/runtime packages.
 
 ---
 
 ### 2026-08-25 — Release workflow version extraction must avoid PowerShell quoting traps
 
-**Symptom**
-
-GitHub Actions failed during `Read app version` with a Node `SyntaxError` caused by escaped quotes being passed incorrectly from PowerShell.
-
-**Bad pattern**
-
-```powershell
-node -p \"require('./package.json').version\"
-```
-
-**Fix**
-
-Use PowerShell JSON parsing:
+Use PowerShell JSON parsing instead of nested shell quoting:
 
 ```powershell
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 "version=$version" >> $env:GITHUB_OUTPUT
 ```
 
-**Prevention**
-
-Prefer native PowerShell parsing inside Windows Actions. Avoid nested shell quoting when reading JSON.
-
 ---
 
 ### 2026-08-25 — `setup-node` npm cache requires a lockfile
 
-**Symptom**
+`actions/setup-node` with `cache: npm` requires a supported lockfile. The repository previously had no lockfile.
 
-GitHub Actions failed at `actions/setup-node` with:
-
-```text
-Dependencies lock file is not found
-```
-
-**Root cause**
-
-The workflow enabled `cache: npm`, but the repository did not contain `package-lock.json`, `npm-shrinkwrap.json`, or `yarn.lock`.
-
-**Fix**
-
-Disable npm caching until a lockfile is committed, or commit a valid `package-lock.json` and use it consistently.
-
-**Prevention**
-
-Use a committed lockfile for reproducible builds. Do not enable package-manager caching without the required lockfile.
+Use a committed `package-lock.json` for reproducible builds, or do not enable npm caching.
 
 ---
 
 ### 2026-08-25 — Release builds should not run on every source commit
 
-**Problem**
-
-The release workflow originally triggered on every push to `main`.
-
-**Impact**
-
-Normal source changes started Windows packaging and release jobs.
-
-**Current approach**
-
-Release automation should be separated from normal development. A release signal should be explicit, preferably a semantic version tag such as:
-
-```text
-v0.2.4
-```
-
-If a temporary `package.json` path trigger is used, only changes to the application version should trigger packaging.
-
-**Prevention**
-
-Keep release workflows separate from normal CI. Use version tags for production releases.
+Normal source commits should not create Windows release builds. Production releases need an explicit release signal, preferably a semantic version tag such as `v0.2.4`.
 
 ---
 
 ### 2026-08-25 — GitHub Releases need versioned tags for Electron auto-update
 
-The Electron updater needs predictable release metadata such as `latest.yml` and versioned releases.
-
-Preferred release flow:
+Preferred flow:
 
 ```text
-package.json version change
+package.json version
         ↓
-semantic version tag: v0.2.4
+v0.2.4 tag
         ↓
 GitHub Actions
         ↓
 electron-builder
         ↓
-GitHub Release v0.2.4
+GitHub Release
         ↓
 latest.yml + installer
         ↓
 electron-updater
 ```
 
-Do not rely on manually overwriting a permanent `latest` tag as the primary release mechanism.
+Do not rely on manually overwriting a permanent `latest` tag.
 
 ---
 
@@ -152,51 +118,16 @@ Do not rely on manually overwriting a permanent `latest` tag as the primary rele
 
 ### 2026-08-25 — Verify TypeScript config paths
 
-**Symptom**
-
-The `typecheck` script referenced:
-
-```text
-tsconfig.tsconfig.json
-```
-
-**Fix**
-
-The correct project config is:
-
-```text
-tsconfig.json
-```
-
-**Prevention**
-
-When changing npm scripts, verify every referenced file exists in the repository.
+The `typecheck` script previously referenced `tsconfig.tsconfig.json`. The correct file is `tsconfig.json`.
 
 ---
 
-## Dependency Management
-
-### General rule
-
-Prefer reproducible dependency versions for build-critical packages:
-
-- `electron`
-- `electron-builder`
-- `electron-updater`
-- TypeScript
-- Vite
-- Node-related build tooling
-
-Avoid blindly using `latest` when package compatibility matters.
-
 ## Release Checklist
 
-Before creating a Windows release:
-
 - [ ] `package.json` version is correct.
+- [ ] Electron renderer uses relative assets when loaded with `file://`.
 - [ ] `electron-updater` is compatible with `electron-builder`.
 - [ ] TypeScript config paths are valid.
-- [ ] Build scripts reference existing files.
 - [ ] Dependencies install successfully.
 - [ ] Electron build succeeds.
 - [ ] NSIS installer is generated.
