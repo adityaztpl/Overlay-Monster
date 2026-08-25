@@ -5,6 +5,7 @@
   "description": "Protected AI overlay browser desktop application.",
   "author": "Aditya Shinde",
   "main": "dist/electron/main.js",
+  "packageManager": "npm@10.9.2",
   "engines": {
     "node": ">=22.12.0"
   },
